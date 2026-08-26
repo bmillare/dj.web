@@ -1,0 +1,9 @@
+.cpcache/
+.direnv/
+target/
+.nrepl-port
+.calva/
+.clj-kondo/.cache/
+
+# Local Clojars deploy creds (sourced by the deploy command). NEVER commit.
+.secrets.env
