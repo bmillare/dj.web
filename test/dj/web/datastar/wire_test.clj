@@ -286,3 +286,19 @@
     (is (= ["elements <div>x</div>"]
            (wire/->patch-elements "<div>x</div>" {:d*.sse/id "e1"
                                                   :d*.sse/retry-duration 500})))))
+
+(deftest unknown-options-and-invalid-modes-fail-at-the-call-site
+  (testing "unknown keys are not silently mistaken for supported aliases"
+    (doseq [opts [{:selector "#app"}
+                  {:mode "append"}
+                  {:d*.elements/typo "#app"}]]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"unknown option"
+                            (wire/->patch-elements "<main id=\"app\"></main>" opts)))))
+  (testing "signal options are equally strict"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"unknown option"
+                          (wire/->patch-signals "{\"n\":1}" {:selector "#app"}))))
+  (testing "only modes implemented by the pinned Datastar client are accepted"
+    (doseq [mode ["morph" "bogus" ""]]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"unsupported patch mode"
+                            (wire/->patch-elements "<main></main>"
+                                                   {wire/patch-mode mode}))))))

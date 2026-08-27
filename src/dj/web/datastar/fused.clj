@@ -55,6 +55,32 @@
 (def ^:private unsupported-signal-opts
   {wire/only-if-missing "onlyIfMissing"})
 
+(def ^:private sse-opt-keys
+  #{sse/id sse/retry-duration})
+
+(def ^:private element-opt-keys
+  (into sse-opt-keys
+        [wire/selector wire/patch-mode wire/use-view-transition
+         wire/view-transition-selector wire/element-namespace]))
+
+(def ^:private signal-opt-keys
+  (conj sse-opt-keys wire/only-if-missing))
+
+(def ^:private patch-modes
+  #{"remove" "outer" "inner" "replace" "prepend" "append" "before" "after"})
+
+(defn- reject-unknown! [opts known op]
+  (when-let [ks (not-empty (filterv #(not (contains? known %)) (keys opts)))]
+    (throw (ex-info (str "dj.web.datastar.fused/" op " received unknown option "
+                         (str/join ", " (map pr-str ks)))
+                    {:unknown ks :op op}))))
+
+(defn- validate-patch-mode! [mode op]
+  (when-not (contains? patch-modes mode)
+    (throw (ex-info (str "dj.web.datastar.fused/" op
+                         " received unsupported patch mode " (pr-str mode))
+                    {:patch-mode mode :supported patch-modes :op op}))))
+
 (defn- reject-unsupported! [opts unsupported op]
   (when-let [ks (not-empty (filterv #(contains? opts %) (keys unsupported)))]
     (throw (ex-info (str "dj.web.datastar.fused/" op " does not implement "
@@ -84,11 +110,13 @@
   "Write one complete elements event directly to `writer` without flushing."
   ([writer elements] (write-patch-elements! writer elements {}))
   ([^Writer writer ^String elements opts]
+   (reject-unknown! opts element-opt-keys "write-patch-elements!")
    (reject-unsupported! opts unsupported-element-opts "write-patch-elements!")
    (let [selector (get opts wire/selector "")
          mode     (get opts wire/patch-mode "outer")]
      (assert (string? selector) "Datastar selector must be a String")
      (assert (string? mode) "Datastar patch mode must be a String")
+     (validate-patch-mode! mode "write-patch-elements!")
      (begin-event! writer wire/event-type-patch-elements opts)
      (when-not (str/blank? selector)
        (write-line! writer "data: selector " selector))
@@ -103,6 +131,7 @@
   "Write one complete signals event directly to `writer` without flushing."
   ([writer signals-json] (write-patch-signals! writer signals-json {}))
   ([^Writer writer ^String signals-json opts]
+   (reject-unknown! opts signal-opt-keys "write-patch-signals!")
    (reject-unsupported! opts unsupported-signal-opts "write-patch-signals!")
    (begin-event! writer wire/event-type-patch-signals opts)
    (when-not (str/blank? signals-json)

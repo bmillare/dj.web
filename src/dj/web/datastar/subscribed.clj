@@ -42,8 +42,12 @@
    (->Registry (atom {}) clock)))
 
 (defn active-count
-  "Number of request owners currently registered. Intended for lifecycle
-  visibility and tests, not application routing."
+  "Number of request owners currently registered.
+
+  This is an eventually accurate lifecycle indicator, not an instantaneous
+  socket count or an application-routing primitive. An orderly client departure
+  may only become visible after a later write fails; the default heartbeat bounds
+  that lag by periodically exercising idle connections."
   [{:keys [connections]}]
   (count @connections))
 
@@ -196,7 +200,14 @@
   once after every scheduled dirty window. Registration before the initial
   render closes the race: a producer that misses the new connection committed
   before that render reads current truth; a later producer marks it dirty.
-  Heartbeats are SSE comments and therefore do not alter browser state.
+  Heartbeats are SSE comments and therefore do not alter browser state. They
+  also reap departed clients whose disconnect has not yet surfaced; disabling
+  them removes that idle-connection cleanup bound.
+
+  For REPL development, pass a Var (`#'render-main!`) rather than a captured
+  function value. Each render then dereferences the current Var root, so a
+  namespace reload updates an already-open, potentially days-long connection.
+  This is the render-side counterpart to passing `#'app` to `http/start!`.
 
   Options:
   - `:heartbeat-ms` — idle time before `: ping` (default 15000; nil disables)

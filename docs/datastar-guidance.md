@@ -16,7 +16,7 @@ built.
 
 #### Why large/fat/main morphs (immediate mode)?
 
-By only using `data: mode morph` and always targeting the `main` element of the document the API can be massively simplified. This avoids having the explosion of endpoints you get with HTMX and makes reasoning about your app much simpler.
+By using Datastar v1.0.2's default `outer` morphing/Idiomorph mode (normally with no mode line) and always targeting the `main` element of the document the API can be massively simplified. This avoids having the explosion of endpoints you get with HTMX and makes reasoning about your app much simpler. The other supported modes are `remove`, `inner`, `replace`, `prepend`, `append`, `before`, and `after`; there is no `morph` mode, and `replace` is the non-morphing replacement.
 
 #### Why no diffing?
 
@@ -147,7 +147,7 @@ The simplest way to do this is to recalculate and cache values after a batch has
 ### SSE (Server-Sent Events) > WebSockets
 *   **The standard intuition:** WebSockets are the ultimate tool for real-time, bi-directional web applications.
 *   **The Datastar reality:** Operationally, WebSockets are a "nightmare" at scale. They suffer from blocked ports, load-balancing difficulties, lack of multiplexing (which can lead to accidental DDoS issues), high mobile battery drain, and no built-in compression.
-*   **Guideline:** Use SSE. Because SSE operates over standard HTTP, it automatically inherits multiplexing, header support, built-in compression, HTTP/2 & HTTP/3 benefits, and automatic disconnect/reconnect handling out of the box.
+*   **Guideline:** Use SSE. Because SSE operates over standard HTTP, it inherits multiplexing, header support, built-in compression, and HTTP/2 & HTTP/3 benefits. A stream that must reopen after a `200 OK` response later ends (for example during a deploy, proxy timeout, or render failure) requires an explicit client policy such as `@get('/updates', {retry: 'always', retryMaxCount: 1000})`; the default `retry: 'auto'` retries a failed fetch but does not reopen a successfully started stream after a clean end.
 
 ### Server-Sent Events (SSE) > WebSockets for Real-Time State
 When developers think of real-time server-to-client communication, WebSockets are almost always the default choice.
@@ -220,7 +220,7 @@ While frameworks like Turbo or standard HTMX often rely on scattered endpoints r
 
 ### Move "Locality of Behavior" (LoB) to the Backend
 * **The Standard Intuition:** Front-end code (or HTML attributes) should dictate what happens to the UI. For example, HTMX uses attributes like `hx-target` and `hx-swap` so the HTML explicitly tells the browser where to put the server's response.
-* **The Datastar Insight:** Datastar flips this to be **server-driven**. The client HTML simply says "fetch this" (e.g., `data-on-click="@get('/rebuild')"`); the server responds with an HTML fragment containing an ID, and Datastar implicitly knows to swap out the matching element.
+* **The Datastar Insight:** Datastar flips this to be **server-driven**. The client HTML simply says "fetch this" (e.g., `data-on:click="@get('/rebuild')"`); the server responds with an HTML fragment containing an ID, and Datastar implicitly knows to swap out the matching element.
 * **Guideline:** Keep your client-side API simple and move the routing/swapping logic to backend state. As user `sudodevnull` notes, a single line of backend code like `datastar.Patch(renderComponent(db.NextRow))` becomes the ultimate Locality of Behavior.
 
 ---
@@ -247,7 +247,7 @@ Router is a simple map, this means path parameters are not supported use query p
 **The Unintuitive Claim:** Doing simple DOM swaps yourself in vanilla JS is fundamentally broken for production apps.
 **The Insight (from sudodevnull):**
 While one might think `selector.outerHTML = await fetch()` is all you need, doing it manually ignores massive edge cases.
-*   Datastar inherently handles complex UI state issues that usually require bloated JS shims, such as: exponential backoff for connection drops, auto-reconnecting on tab visibility changes, and maintaining text/cursor selection when an element is swapped out from underneath the user.
+*   Datastar handles complex UI state issues that usually require bloated JS shims, such as reconnecting on tab visibility changes and maintaining text/cursor selection when an element is swapped out from underneath the user. With the default `openWhenHidden: false`, Datastar closes the stream while hidden and reopens it when visible, avoiding idle work while returning to current state. Reopening a successfully started stream after it ends for other reasons requires `retry: 'always'`; it is not provided by the default retry policy.
 *   Despite handling these edge cases, Datastar maintains a tiny footprint (40% smaller than HTMX).
 *   **Guideline:** Rely on the framework for DOM patching. Don't write custom JS to manipulate the DOM, as you will likely break the graceful handling of these edge cases.
 
@@ -273,7 +273,7 @@ Many frontend frameworks provide declarative JavaScript wrappers for animations,
 *   **The Guideline:** Leverage CSS and native DOM APIs directly.
     *   *Animations:* You should be using native CSS for animations, not JS attributes.
     *   *Window Events:* Use Datastar's `data-on` to listen directly to window-level resize events natively.
-    *   *Scrolling:* Simply replicate scroll behaviors natively with hooks like `data-on-load="el.scrollIntoView()"`.
+    *   *Scrolling:* Simply replicate scroll behaviors natively with hooks like `data-on:load="el.scrollIntoView()"`.
 
 ### Native Browser Event Bubbling > Framework Event Listeners
 * **The Standard View:** Frameworks should handle event binding. If you have a grid of 20,000 checkboxes, you attach an `onClick` handler to each component in your JS framework.
@@ -336,7 +336,7 @@ Modern web dev often results in building two applications: a backend that makes 
 
 ### Spotty Connectivity is Fine, but "Offline Mode" is Impossible
 *   **The standard intuition:** If an app requires constant server contact to render UI, it will be unusable on mobile devices with unreliable connections.
-*   **The reality/claim:** SSE handles spotty connections (like 3G) gracefully because it has built-in auto-reconnection that is often faster and more reliable than WebSockets. However, because there is no client-side state, a true "offline mode" (like saving items to an offline cart) is structurally impossible.
+*   **The reality/claim:** SSE can handle spotty connections (like 3G) gracefully when the client uses a durable retry policy such as `retry: 'always'`. However, because there is no client-side state, a true "offline mode" (like saving items to an offline cart) is structurally impossible.
 *   **Guideline:** Assess your app's true offline requirements before adopting Datastar. If you need optimistic UI updates during total network death, this architecture isn't a fit. If you just need it to survive subway tunnels and bad 3G, SSE handles it seamlessly.
 
 ### Network Reliability: Sockets vs. Custom JS Timeouts
@@ -426,7 +426,7 @@ Many developers assume that HTMX/Datastar-style frameworks are only good for bas
 ---
 
 ### Ugly HTML Attributes = Excellent Developer Ergonomics
-Modern frameworks often abstract logic away into separate JS files or complex component lifecycles. Datastar puts logic directly into HTML attributes using a custom DSL (e.g., `<input data-on-input__debounce.200ms="@get('/examples/active_search/search')" />`).
+Modern frameworks often abstract logic away into separate JS files or complex component lifecycles. Datastar puts logic directly into HTML attributes using a custom DSL (e.g., `<input data-on:input__debounce.200ms="@get('/examples/active_search/search')" />`).
 * **The Unintuitive Claim:** While standard devs in the thread call this "crazy," "wrong," or a "mish-mash of different ad-hoc DSLs," the Datastar advocates argue this is the exact point of the framework. It keeps you within spec-compliant `data-*` attributes while maximizing the declarativeness of HTML.
 * **Guideline:** Keep your frontend logic minimal and declarative inside the DOM elements. Use Datastar's expression DSL in standard HTML `data-*` attributes to handle events, debouncing, and server requests without writing separate client-side JavaScript
 

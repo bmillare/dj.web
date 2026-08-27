@@ -1,7 +1,8 @@
 (ns dj.web.datastar.fused-test
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [dj.web.datastar.fused :as fused])
+            [dj.web.datastar.fused :as fused]
+            [dj.web.datastar.wire :as wire])
   (:import [java.io ByteArrayInputStream ByteArrayOutputStream]
            [java.nio.charset StandardCharsets]
            [java.util.zip GZIPInputStream]))
@@ -66,3 +67,17 @@
     (is (nil? (get-in (fused/response nil identity) [:headers "Content-Encoding"])))
     (is (thrown? clojure.lang.ExceptionInfo
                  (fused/response nil identity {:compression :brotli})))))
+
+(deftest fused-options-fail-before-any-frame-is-written
+  (doseq [opts [{:selector "#app"}
+                {:mode "append"}
+                {:d*.elements/typo true}
+                {wire/patch-mode "morph"}]]
+    (let [writer (java.io.StringWriter.)]
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (fused/write-patch-elements! writer "<main></main>" opts)))
+      (is (= "" (str writer)))))
+  (let [writer (java.io.StringWriter.)]
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (fused/write-patch-signals! writer "{}" {:selector "#app"})))
+    (is (= "" (str writer)))))

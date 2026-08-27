@@ -30,6 +30,9 @@ The architecture and application opinions behind this stack are preserved in
 simple: commit authoritative state, wake the relevant subscriptions, render the
 latest view, and let Datastar morph it into the browser DOM.
 
+Concrete REPL, lifecycle, incremental-adoption, and gzip-test findings are in
+[Internal lessons from a real consumer](docs/internal-lessons.md).
+
 ## Requirements
 
 - JDK 21 or newer (virtual threads)
@@ -121,6 +124,16 @@ after 100 ms of continuous mutation, sends a heartbeat after 15 seconds idle,
 and negotiates one connection-long gzip stream. These are options to
 `subscription-response`, not global settings.
 
+For a complete page shell, durable browser subscription, command route, dirty
+mark, and current-state render, run the tested example:
+
+```bash
+nix develop --command clojure -M:hello-world
+```
+
+Then open `http://localhost:8080`. The example lives under `dev/`, so it is not
+included in the library jar.
+
 ## Choosing a Datastar transport
 
 | namespace | ownership model | compression | intended use |
@@ -131,8 +144,22 @@ and negotiates one connection-long gzip stream. These are options to
 | `dj.web.datastar.subscribed` | one request thread owns the writer | identity or gzip | long-lived current-state UI streams |
 
 The fused and subscribed writers support `selector` and `mode`. Other Datastar
-element options, and `onlyIfMissing` for signal patches, fail explicitly rather
-than disappearing silently.
+element options, unknown keys, unsupported patch modes, and `onlyIfMissing` for
+signal patches fail explicitly rather than disappearing silently. Options use
+the exported namespaced keys such as `wire/selector` and `wire/patch-mode`; plain
+`:selector` and `:mode` are not aliases.
+
+## Incremental adoption
+
+An existing application can start dj.web on a separate port inside the same JVM
+and nREPL as its current server. Both servers can share domain namespaces while
+keeping handlers, executors, and stop/start lifecycles separate. This makes it
+possible to migrate one page at a time without mounting dj.web into the existing
+HTTP stack; stop the dj.web server with `http/stop!` when the trial ends.
+
+For REPL-driven development, pass Vars at both long-lived boundaries: `#'app`
+to `http/start!` and `#'render-main!` to `subscription-response`. Reloading a
+namespace then reaches both new requests and already-open subscriptions.
 
 ## Datastar browser asset
 

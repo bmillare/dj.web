@@ -190,6 +190,24 @@
 (def ^:private signals-opt-keys
   (array-map only-if-missing "onlyIfMissing"))
 
+(def ^:private sse-opt-keys
+  #{:d*.sse/id :d*.sse/retry-duration})
+
+(def ^:private patch-modes
+  #{"remove" "outer" "inner" "replace" "prepend" "append" "before" "after"})
+
+(defn- reject-unknown-opts! [opts known op]
+  (when-let [ks (not-empty (filterv #(not (contains? known %)) (keys opts)))]
+    (throw (ex-info (str "dj.web.datastar.wire/" op " received unknown option "
+                         (str/join ", " (map pr-str ks)))
+                    {:unknown ks :op op}))))
+
+(defn- validate-patch-mode! [mode op]
+  (when-not (contains? patch-modes mode)
+    (throw (ex-info (str "dj.web.datastar.wire/" op
+                         " received unsupported patch mode " (pr-str mode))
+                    {:patch-mode mode :supported patch-modes :op op}))))
+
 (defn- reject-unsupported-opts!
   "Throw if `opts` carries a layer-2 option this stack does not implement.
 
@@ -234,11 +252,15 @@
   only for `\"\"` exactly. `\"  \"` is non-empty to `.lines()` and blank to
   `str/blank?`, and the SDK suppresses it. Two rules that look like one."
   [^String elements opts]
+  (reject-unknown-opts! opts
+                        (into sse-opt-keys (keys element-opt-keys))
+                        "patch-elements!")
   (reject-unsupported-opts! opts unsupported-element-opt-keys "patch-elements!")
   (let [selector-value (get opts selector "")
         mode-value     (get opts patch-mode "outer")]
     (assert (string? selector-value) "Datastar selector must be a String")
     (assert (string? mode-value) "Datastar patch mode must be a String")
+    (validate-patch-mode! mode-value "patch-elements!")
     (cond-> []
       (not (str/blank? selector-value)) (conj (str "selector " selector-value))
       (and (not (str/blank? mode-value)) (not= "outer" mode-value))
@@ -260,6 +282,9 @@
   SDK does — the caller owns the encoder (`clojure.data.json` here), and a map
   argument would silently pick one."
   [^String signals opts]
+  (reject-unknown-opts! opts
+                        (into sse-opt-keys (keys signals-opt-keys))
+                        "patch-signals!")
   (reject-unsupported-opts! opts signals-opt-keys "patch-signals!")
   (if (str/blank? signals)
     []

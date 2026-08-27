@@ -14,11 +14,15 @@
    :main-opts ["-m" "nrepl.cmdline"]}
 
   :test
-  {:extra-paths ["test"]
+  {:extra-paths ["dev" "test"]
    :extra-deps {io.github.cognitect-labs/test-runner
                 {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
    :main-opts ["-m" "cognitect.test-runner"]
    :exec-fn cognitect.test-runner.api/test}
+
+  :hello-world
+  {:extra-paths ["dev"]
+   :main-opts ["-m" "dj.web.dev.hello-world"]}
 
   :build
   {:deps {io.github.clojure/tools.build {:mvn/version "0.10.5"}

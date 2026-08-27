@@ -6,9 +6,12 @@
             [dj.web.http :as http]
             [dj.web.http.error :as http-error]
             [dj.web.http.protocols :as http-proto])
-  (:import [java.io BufferedReader ByteArrayOutputStream InputStreamReader]
-           [java.net Socket]
-           [java.util.concurrent ArrayBlockingQueue CountDownLatch TimeUnit]))
+  (:import [java.io BufferedReader ByteArrayOutputStream InputStream InputStreamReader]
+           [java.net Socket URI]
+           [java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers]
+           [java.nio.charset StandardCharsets]
+           [java.util.concurrent ArrayBlockingQueue CountDownLatch TimeUnit]
+           [java.util.zip GZIPInputStream]))
 
 (defn- write-response! [response out]
   (http-proto/write-body! (:body response) out))
@@ -26,6 +29,38 @@
         (when-not (and line (str/includes? line "data: elements"))
           (recur))))
     socket))
+
+(defn- read-through!
+  "Read bytes through `suffix`. This deliberately does not wrap a live gzip
+  stream in a Reader: InflaterInputStream.available() may report data before a
+  complete character/frame exists, which can deadlock buffered readers."
+  [^InputStream in suffix]
+  (let [suffix (.getBytes ^String suffix StandardCharsets/UTF_8)
+        out    (ByteArrayOutputStream.)]
+    (loop [matched 0]
+      (let [b (.read in)]
+        (when (neg? b) (throw (ex-info "stream ended before delimiter" {})))
+        (.write out b)
+        (let [matched (if (= b (bit-and 0xff (aget suffix matched)))
+                        (inc matched)
+                        (if (= b (bit-and 0xff (aget suffix 0))) 1 0))]
+          (if (= matched (alength suffix))
+            (.toString out StandardCharsets/UTF_8)
+            (recur matched)))))))
+
+(defn- open-gzip-sse! [port]
+  (let [client   (HttpClient/newHttpClient)
+        request  (-> (HttpRequest/newBuilder
+                      (URI/create (str "http://127.0.0.1:" port "/updates")))
+                     (.header "Accept" "text/event-stream")
+                     (.header "Accept-Encoding" "gzip")
+                     (.build))
+        response (.send client request (HttpResponse$BodyHandlers/ofInputStream))
+        encoding (some-> response .headers (.firstValue "Content-Encoding")
+                         (.orElse nil))]
+    (when-not (= "gzip" encoding)
+      (throw (ex-info "server did not negotiate gzip" {:encoding encoding})))
+    (GZIPInputStream. (.body response))))
 
 (defn- eventually-zero? [registry]
   (loop [attempts 100]
@@ -87,6 +122,29 @@
     (is (= 1 @renders))
     (is (zero? @(:now-ms scheduler)))
     (is (zero? (subscribed/active-count registry)))))
+
+(deftest live-gzip-subscription-is-readable-across-dirty-marks
+  (let [registry (subscribed/registry)
+        n        (atom 0)
+        server   (http/start!
+                  (fn [request]
+                    (subscribed/subscription-response
+                     request registry
+                     #(fused/write-patch-elements!
+                       % (str "<main id=\"app\">" @n "</main>"))))
+                  {:port 0})
+        ^InputStream gzip (open-gzip-sse! (http/port server))]
+    (try
+      (is (str/includes? (read-through! gzip "\n\n") ">0</main>"))
+      (reset! n 1)
+      (is (= 1 (subscribed/mark-dirty! registry)))
+      (is (str/includes? (read-through! gzip "\n\n") ">1</main>"))
+      (reset! n 2)
+      (is (= 1 (subscribed/mark-dirty! registry)))
+      (is (str/includes? (read-through! gzip "\n\n") ">2</main>"))
+      (finally
+        (.close gzip)
+        (http/stop! server)))))
 
 (deftest deadline-policy-settles-a-quiet-burst-after-the-last-change
   (let [scheduler    (deterministic-scheduler)
