@@ -23,7 +23,8 @@ no Ring or external web-server dependency.
   conflation, bounded settling, heartbeats, and connection cleanup.
 - `dj.web.html` and `dj.web.html.chassis` — small Hiccup and compiled Chassis
   rendering boundaries.
-- `dj.web.datastar.assets` — serve a pinned local Datastar browser bundle.
+- `dj.web.datastar.assets` — construct a script tag for a pinned CDN bundle or
+  a consumer-supplied URL.
 
 The architecture and application opinions behind this stack are preserved in
 [Datastar application guidance](docs/datastar-guidance.md). The central idea is
@@ -163,10 +164,17 @@ namespace then reaches both new requests and already-open subscriptions.
 
 ## Datastar browser asset
 
-`dj.web.datastar.assets` serves `datastar.js` from `$DATASTAR_JS`, falling back
-to `resources/public/datastar.js`. The Nix development shell pins Datastar
-v1.0.2 by hash and exports the path automatically. Applications may serve the
-bundle by any other deployment mechanism and ignore this namespace.
+The consuming application owns browser-asset delivery. `(assets/script)` points
+to Datastar v1.0.2's version-pinned jsDelivr bundle. An application that avoids
+runtime CDN dependencies downloads or builds the bundle, serves it using its own
+static-asset policy, and passes that URL explicitly:
+
+```clojure
+(assets/script "/assets/datastar.js")
+```
+
+dj.web does not bundle, locate, or serve `datastar.js`, and its Nix development
+shell does not provision the file.
 
 ## Development
 

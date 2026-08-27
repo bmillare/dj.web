@@ -9,24 +9,13 @@
       forAllSystems = f:
         nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in {
-      devShells = forAllSystems (pkgs:
-        let
-          # The browser bundle is deliberately pinned rather than fetched from a
-          # CDN at runtime. dj.web.datastar.assets reads this path.
-          datastarJs = pkgs.fetchurl {
-            url = "https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.2/bundles/datastar.js";
-            hash = "sha256-KDfYes9u4LqOTmN2WSbCWpjWOIOwL4i+GUqGuB0/0ko=";
-          };
-        in {
+      devShells = forAllSystems (pkgs: {
           default = pkgs.mkShell {
             packages = [
               pkgs.temurin-bin
               pkgs.clojure
               pkgs.babashka
             ];
-            shellHook = ''
-              export DATASTAR_JS=${datastarJs}
-            '';
           };
         });
     };

@@ -42,7 +42,6 @@
 (defn app [request]
   (case [(:request-method request) (:uri request)]
     [:get "/"] (response/html-response (page))
-    [:get "/datastar.js"] (assets/js-response)
     [:get "/updates"]
     (subscribed/subscription-response request subscriptions #'render-main!)
     [:post "/increment"]

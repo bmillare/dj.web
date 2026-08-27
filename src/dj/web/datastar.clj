@@ -22,7 +22,7 @@
   - `signals` / `datastar-request?` — reading the request side.
 
   Deliberately NOT here, because the coupling would be invented rather than
-  real: hiccup rendering (`dj.web.html`) and serving the client bundle
+  real: hiccup rendering (`dj.web.html`) and constructing the client script tag
   (`dj.web.datastar.assets`).
 
   **This is a wrapper, not an abstraction layer.** SSE options are the SDK's own
