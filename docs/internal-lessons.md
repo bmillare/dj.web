@@ -4,6 +4,20 @@ These are operational lessons learned while adopting dj.web inside an existing
 Clojure application. They supplement the architectural source material in
 `datastar-guidance.md` with concrete library-specific behavior.
 
+## Keep client helpers in the application until their shape is earned
+
+Long-lived browser subscriptions need an explicit expression such as
+`@get('/updates', {retry: 'always', retryMaxCount: 1000})`, but dj.web does not
+wrap that expression in a client-helper API. Applications should write their
+own helpers when local repetition warrants one.
+
+This is deliberate. A shared `util`-style namespace should emerge only after a
+helper has lived across multiple independent web applications and developer
+feedback shows recurring friction in several contexts. Until that evidence
+exists, extracting a convenience function would standardize guesses about its
+arguments, return shape, and policy. Record the pain first; generalize only when
+the accumulated examples make the common shape clear.
+
 ## Keep both long-lived boundaries indirect at the REPL
 
 Pass `#'app` to `dj.web.http/start!` and `#'render-main!` to
