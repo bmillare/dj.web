@@ -243,6 +243,50 @@ Router is a simple map, this means path parameters are not supported use query p
 * Simulating page transitions on the client creates "magical" footguns that are difficult to debug and manage.
 * **The Guideline:** Embrace traditional HATEOAS. If you are changing the actual page, just do a full page reload. Reserve Datastar’s SSE fragment morphing specifically for **ephemeral, in-page state changes** (like toggling buttons, updating live data, or submitting a form).
 
+### Decide Who Owns DOM State Before Adding a Morph Boundary
+
+Idiomorph reconciles server-rendered attributes on surviving elements as well as
+inserting and removing nodes. A class or attribute added imperatively in the
+browser can therefore disappear on the next morph when it is absent from the
+server's HTML. That is usually an ownership conflict, not a reason to repair the
+attribute after every patch.
+
+Choose the owner before choosing a morphing escape hatch:
+
+1. **Domain state is server-owned.** Change it through an action and render it in
+   the next current-state view. Do not maintain a competing browser-only class
+   or attribute for the same fact.
+2. **Ordinary ephemeral UI state is signal-owned.** Use signals for drafts,
+   popovers, transient visual states, and other browser-local facts. Initialize
+   live signals with `data-signals__ifmissing` so a later morph does not reset
+   them, and bind the DOM representation declaratively.
+3. **Specialized imperative behavior is component-owned.** Put browser APIs or
+   external widgets that HTML plus Datastar expressions cannot reasonably
+   express behind a small Web Component or adapter. Drive its public surface
+   with signals and host attributes where practical.
+4. **A morph boundary is exceptional.** Declare one only when morphing would
+   violate the chosen ownership or an external component's lifecycle.
+
+A Web Component is not automatically an ignored island. Datastar can often
+continue morphing the custom element's host attributes while the component owns
+its internals. Conversely, ordinary signal-driven UI does not need a Web
+Component.
+
+#### Exceptional integration seams
+
+Use `data-ignore-morph` when the client or an external component owns an opaque
+subtree, and emit it consistently in the server-rendered markup. Use
+`data-preserve-attr` when the browser narrowly owns a named attribute. Preserving
+an entire `class` attribute is especially sharp because it also prevents the
+server from changing any class on that element.
+
+A scoped `MutationObserver` or private JavaScript property can be appropriate
+inside an owning component when state must be derived from a browser-only API.
+Keep that mechanism private and idempotent; it is an integration seam, not an
+application state model. In particular, Idiomorph may edit attributes on a
+surviving node, so an observer that truly derives browser decoration cannot
+assume that watching only child-list mutations is sufficient.
+
 ### Let the Framework Handle the UI Edge Cases
 **The Unintuitive Claim:** Doing simple DOM swaps yourself in vanilla JS is fundamentally broken for production apps.
 **The Insight (from sudodevnull):**
@@ -364,7 +408,7 @@ A common critique is that server-driven HTML frameworks cannot work offline (unl
 
 #### Signals are only for ephemeral client-side state
 
-Signals should only be used for ephemeral client side state. Things like: the current value of a text input, whether a popover is visible, current csrf token, input validation errors. Signals can be controlled on the client via expressions, or from the backend via `patch-signals`.
+Signals should only be used for ephemeral client side state. Things like: the current value of a text input, whether a popover is visible, current csrf token, input validation errors. Signals can be controlled on the client via expressions, or from the backend via `patch-signals`. See **Decide Who Owns DOM State Before Adding a Morph Boundary** for how signals fit between server-owned domain state and specialized client components.
 
 #### Signals in elements should be declared __ifmissing
 
@@ -435,7 +479,7 @@ Modern frameworks often abstract logic away into separate JS files or complex co
 ### Complex UI (Animations/Grids) is Solved via Web Components + Datastar
 When faced with complex client-side requirements (like data grids or interactive canvas animations), developers usually reach for React components.
 * **The Unintuitive Claim:** You can bridge the gap using tiny, vanilla Web Components driven by Datastar signals. For example, the complex "slick Star space animation" on the Datastar homepage is just a *"basic 1kb web component driven by datastar attributes."*
-* **Guideline:** If you need highly specialized client-side execution that HTML can't handle, wrap it in a lightweight Web Component and use Datastar's state/signals to drive it, keeping your bundle size minuscule.
+* **Guideline:** If you need highly specialized client-side execution that HTML plus Datastar expressions cannot reasonably express, wrap it in a lightweight Web Component and use signals and host attributes to drive its public surface. Let Datastar keep morphing the host when that contract is safe; add an ignored-morph boundary only when the component truly owns an opaque subtree or lifecycle. Do not introduce a Web Component for ordinary signal-driven UI.
 
 ---
 
