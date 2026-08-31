@@ -132,9 +132,9 @@ Rather than executing a heavy server render on the initial `GET` request (requir
 This offers significant advantages: dynamic content is only rendered and processed if the user actually has JavaScript and first-party cookies enabled. The server does less heavy lifting for link-preview crawlers and bots, saving expensive compute strictly for real users.
 
 ### Navigation vs. Morphing (Avoiding "Magic" Footguns)
-To make applications feel fast, SPA developers have been trained to intercept all link clicks, prevent full page reloads, and swap out the URL and page contents using JavaScript (like Hotwire Turbo or React Router). 
+To make applications feel fast, SPA developers have been trained to intercept all link clicks, prevent full page reloads, manage browser history manually, and swap out the URL and page contents using JavaScript (like Hotwire Turbo or React Router). 
 
-**Datastar’s stance is the opposite:** Simulating full page transitions on the client creates "magical" footguns that are notoriously difficult to debug and manage. Embrace traditional HATEOAS. If the user is fundamentally navigating to a new page, **just do a full page reload.** Reserve Datastar’s SSE fragment morphing strictly for ephemeral, in-page state changes—like toggling buttons, updating live data, or submitting forms.
+**Datastar’s stance is the opposite:** Simulating full page transitions and managing browser history on the client creates "magical" footguns and massive complexity. Embrace traditional HATEOAS. If the user is fundamentally navigating to a new page, **just use an `<a>` tag and do a full page reload.** Let the browser manage its history—it's what it is good at. If you want smooth page transitions, leverage the native browser **View Transition API** rather than trying to fake it with client-side routing. Reserve Datastar’s SSE fragment morphing strictly for ephemeral, in-page state changes—like toggling buttons, updating live data, or submitting forms.
 
 ### The "Immediate-Mode Game Engine" Approach to the DOM
 The standard web developer intuition assumes that overwriting massive chunks of the DOM (like a 2,500-cell data grid) repeatedly will freeze the browser and ruin performance. As a result, developers spend immense effort writing logic to target and update single nodes.
@@ -170,10 +170,11 @@ To succeed with Datastar, you must unlearn SPA habits and lean into native HTML,
 * **The Datastar Reality:** Attaching thousands of listeners in JavaScript causes severe memory and performance overhead. Browsers natively handle event bubbling in highly optimized C++.
 * **The Guideline:** Never attach thousands of identical listeners. Instead, attach a *single* `data-on:click` listener to the parent container. Place standard HTML `data-id` or `data-action` attributes on the child elements. When a child is clicked, the event natively bubbles up to the parent, which reads the attributes and triggers the server request. *(Pro-tip: Use CSS `pointer-events: none` on child elements you want the browser to ignore during the click phase).*
 
-### 2. Replace "Optimistic UI" with CSS and Native Timings
+### 2. Replace "Optimistic UI" with Loading Indicators and Native Timings
 * **The SPA Intuition:** Because network latency exists, you must write complex JavaScript to instantly update the UI state locally (Optimistic UI), and write even more complex JS to roll that state back if the server request fails.
-* **The Datastar Reality:** Tricking the human brain is significantly cheaper than managing distributed state synchronization. You do not need JavaScript to make an app feel instantaneous.
-* **The Guideline:** Keep the server as the sole source of truth, and bridge the latency gap with native CSS and DOM timings:
+* **The Datastar Reality:** Optimistic UI is ultimately deceiving the user. Tricking the human brain with visuals or clearly communicating loading states is significantly better and cheaper than managing distributed state synchronization or showing a success state that suddenly reverts to a failure.
+* **The Guideline:** Keep the server as the sole source of truth, and bridge the latency gap using indicators and native DOM timings:
+    * **Use Loading Indicators:** Inform users an action is in progress. Datastar provides `data-indicator` to easily toggle loading states. In a strict CQRS architecture, you can manually trigger a loading class on click (e.g., `data-on:click="el.classList.add('loading'); @post(...)"`), which gets cleanly wiped away when the server pushes the subsequent updated DOM view.
     * **Use `pointerdown` over `click`:** Bind your events to `data-on:pointerdown` (or `mousedown`). This fires the moment the mouse button is depressed, sending the server request fractions of a second faster than waiting for the full `click` event to complete.
     * **CSS "Pop" Animations:** On `pointerdown`, trigger a 200–300ms CSS transition. By the time the visual animation finishes, the server round-trip has completed, and Datastar seamlessly morphs the true server state into the DOM. 
 
@@ -189,6 +190,11 @@ To succeed with Datastar, you must unlearn SPA habits and lean into native HTML,
 * **The SPA Intuition:** Frontend logic belongs in separate JavaScript files, hooks, or complex component lifecycles. HTML should just be a dumb template. 
 * **The Datastar Reality:** Standard SPA developers often look at Datastar and complain that it looks "crazy," "ugly," or like a "mish-mash of ad-hoc DSLs." This completely misses the point. Embedding logic directly into the HTML is the core feature, not a bug.
 * **The Guideline:** Maximize the declarativeness of your HTML. Keep your frontend logic minimal and define it completely within spec-compliant `data-*` attributes. Using Datastar’s expression DSL (e.g., `<input data-on:input__debounce.200ms="@get('/search')" />`) eliminates context-switching, removes the need for separate JS files, and keeps the behavior of the element perfectly localized to the element itself.
+
+### 5. Semantic HTML and Accessibility (A11y)
+* **The SPA Intuition:** The framework provides complex specialized components to handle focus management and ARIA states for you.
+* **The Datastar Reality:** Datastar intentionally leaves accessibility up to you and the native platform. 
+* **The Guideline:** Use semantic HTML and apply ARIA where it makes sense. Datastar's `data-attr` plugin is perfectly suited to sync ephemeral client states to ARIA attributes for screen readers (e.g., binding a dropdown's state directly into ARIA via `data-attr:aria-expanded="$_menuOpen ? 'true' : 'false'"`). This gives you total control over accessibility without relying on an external component library.
 
 ## Signals & Client-Side State
 
