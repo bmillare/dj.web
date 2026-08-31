@@ -1,4 +1,4 @@
-# Context: Datastar / Hyperlith Architecture
+# Context: Datastar / dj.web Architecture
 
 This project uses Datastar. It completely rejects standard SPA (React/Vue) and REST/JSON API paradigms. Treat the browser as a dumb, immediate-mode renderer. The server owns 100% of the state, routing, and UI logic. 
 
