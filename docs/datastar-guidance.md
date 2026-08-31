@@ -231,62 +231,40 @@ Crucially: A Web Component is not automatically an ignored island. Datastar can 
 
 ## Operational Behaviors & Security
 
-### No CORS
-
-By hosting all assets on the same origin we avoid the need for CORS. This avoids additional server round trips and helps reduce latency.
-
-### Cookie based sessions
-
-Hyperlith uses a simple unguessable random uid for managing sessions. This should be used to look up further auth/permission information in the database.
-
-### CSRF
-
-Double submit cookie pattern is used for CSRF.
-
----
+Operating an immediate-mode, server-driven architecture like Hyperlith requires unlearning several deeply ingrained SPA habits. Because the UI is bound to a persistent stream of truth from the server, everything from how you read network profiles to how you handle offline users changes fundamentally.
 
 ### Network DevTools Will Deceive You (The "Infinite Download" Illusion)
-*   **The standard intuition:** If you open the network tab and see the page size growing to 20MB+, your frontend bundle is bloated and performance will suffer.
-*   **The reality/claim:** With Datastar, the initial load is actually microscopic (e.g., a 12kb bundle containing Datastar, initial HTML, and CSS). The massive megabyte count in the network tab is just the browser tallying the continuous stream of compressed Server-Sent Events over time.
-*   **Guideline:** Don't panic at cumulative network sizes. Measure your initial time-to-interactive and actual rendering performance, not the running total of the SSE stream.
+* **The Standard Intuition:** If you open the browser’s Network tab and see the page size growing to 20MB+, your frontend is bloated and performance will suffer.
+* **The Datastar Reality:** Your initial load is actually microscopic—often just a ~12kb bundle containing the Datastar library, initial HTML, and CSS. The massive megabyte count in the Network tab is simply the browser tallying the continuous stream of compressed Server-Sent Events (SSE) over the lifecycle of the session.
+* **Guideline:** Do not panic at cumulative network sizes. Evaluate performance based on initial time-to-interactive and rendering smoothness, not the running byte total of an open SSE stream.
 
----
+### Hot-Reloading is Global, Not Just Local DX
+* **The Standard Intuition:** Hot-reloading (HMR) is a local developer experience feature for updating frontend components.
+* **The Datastar Reality:** Because the server is constantly streaming UI state, modifying server logic (like HTML, CSS, or backend rules via a REPL) instantly pushes those structural changes to *all* currently connected clients over the SSE stream. 
+* **Guideline:** Server-driven streaming allows for unprecedented live-updates in production environments. You can push structural UI updates without requiring users to refresh their browsers or restart the server.
 
+### Connection Limits and Visibility-Based Pruning
+* **The Standard Intuition:** Maintaining a persistent connection for every single user will exhaust connection pools (especially given HTTP/1.1 limits of ~6 concurrent connections per browser) and drain mobile batteries.
+* **The Datastar Reality:** Datastar intelligently hooks into the browser's native Page Visibility API. If a user switches tabs or minimizes the window, Datastar can prune the connection to aggressively save client battery life and server resources.
+* **Guideline:** Rely on the Visibility API to manage idle users. Furthermore, you should strongly prefer HTTP/2 (which negotiates around 100 concurrent connections by default) to entirely bypass legacy HTTP/1.1 connection limits.
 
-### Hot-Reloading Applies to *All* Connected Users Instantly
-*   **The standard intuition:** Hot-reloading is a local developer experience (DX) feature for the frontend.
-*   **The reality/claim:** Because the server is constantly streaming the UI state, modifying the server logic (like HTML, CSS, or backend rules via a REPL) instantly pushes those structural changes to *all* currently connected clients over the SSE stream.
-*   **Guideline:** Server-driven streaming architectures allow for unprecedented live-updates without requiring users to refresh their browsers or restart the server.
+### Network Resilience: Native Sockets vs. SPA Timeouts
+* **The Standard Intuition:** SPAs (React/Vue) handle spotty 2G/3G networks better because the client logic is already loaded, allowing JS to elegantly manage loading states and retries.
+* **The Datastar Reality:** SPAs on 2G/3G often fail entirely because enterprising engineers usually invent their own arbitrary JavaScript timeouts that make no sense when dealing with a trickle of bytes-per-second. Standard HTML requests and SSE streams rely on native browser socket behavior. The browser intrinsically knows if it is still receiving bytes (even slowly) and won't prematurely kill the request.
+* **Guideline:** Trust the platform. HTML rendering and SSE with a durable retry policy (e.g., `retry: 'always'`) often prove far more resilient in ultra-low bandwidth scenarios than custom SPA timeout logic.
 
----
+### The Offline Paradox: No Optimistic UI, but PWAs Still Work
+* **The Standard Intuition:** If an app requires constant server contact to render UI, it cannot function as an offline Progressive Web App (PWA).
+* **The Datastar Reality:** Because there is no client-side state, a true "offline mode"—where a user performs complex optimistic UI mutations (like adding items to a cart while in airplane mode) and syncs later—is structurally impossible. **However**, offline read-only support is entirely possible.
+* **Guideline:** You can achieve offline PWA support by shifting your caching strategy to a Service Worker. Simply cache the backend-generated HTML. The Datastar library running in the main thread doesn't care if the HTML containing its declarative attributes came from a live network request, an edge worker, or a service worker cache. 
 
-### Visibility-Based Pruning Mitigates Resource Limits
-*   **The standard intuition:** Maintaining a persistent connection for every user will exhaust connection pools (especially on HTTP/1.1 limits of 6 per browser) and drain mobile batteries.
-*   **The reality/claim:** Datastar intelligently hooks into the browser's Page Visibility API. If the user switches tabs or minimizes the window, Datastar can prune the connection.
-*   **Guideline:** While you should strongly prefer HTTP/2 (which negotiates around 100 connections by default), you can rely on the visibility API to aggressively save client battery life and server resources when the app isn't actively being viewed.
+### Security & Session Posture
+Because Hyperlith heavily limits the responsibilities of the client, the security model is significantly simplified, with one notable exception regarding Content Security Policies (CSP).
 
----
-
-### Spotty Connectivity is Fine, but "Offline Mode" is Impossible
-*   **The standard intuition:** If an app requires constant server contact to render UI, it will be unusable on mobile devices with unreliable connections.
-*   **The reality/claim:** SSE can handle spotty connections (like 3G) gracefully when the client uses a durable retry policy such as `retry: 'always'`. However, because there is no client-side state, a true "offline mode" (like saving items to an offline cart) is structurally impossible.
-*   **Guideline:** Assess your app's true offline requirements before adopting Datastar. If you need optimistic UI updates during total network death, this architecture isn't a fit. If you just need it to survive subway tunnels and bad 3G, SSE handles it seamlessly.
-
-### Network Reliability: Sockets vs. Custom JS Timeouts
-**The Standard View:** SPAs (React/Vue) handle bad networks better because the client is loaded and you can elegantly manage loading states and retries via JavaScript.
-**The Datastar Insight (withinboredom):**
-* SPAs on 2G/3G often fail to load entirely because "enterprising engineers usually invent their own timeouts that make no sense when you are dealing with bytes-per-second."
-* Standard HTML requests rely on native browser socket behavior, which intrinsically knows if it is still receiving bytes (even slowly) and won't prematurely kill the request. HTML rendering actually proves more resilient in ultra-low bandwidth scenarios.
-
-### PWA and Offline Support Doesn't Require an SPA
-A common critique is that server-driven HTML frameworks cannot work offline (unlike SPAs which can hold state in JS).
-* **The Unintuitive Claim:** You can achieve offline support by simply caching the backend-generated HTML (which already contains the declarative Datastar attributes) using a Service Worker. The Datastar library running in the main thread doesn't care if the HTML came from the backend, an edge worker, or a service worker cache.
-* **Guideline:** For offline capabilities, shift your caching strategy to the Service Worker level rather than duplicating state management in the browser.
-
-
----
-
-### The Security Trade-off: `unsafe-eval` is Required
-*   **The standard intuition:** Modern secure web apps should strictly ban `eval()` in their Content Security Policies (CSP) to prevent cross-site scripting (XSS).
-*   **The reality/claim:** Datastar evaluates expressions using Immediately Invoked Function Expressions (IIFEs), which strictly requires `unsafe-eval` to be enabled in your CSP for scripts. (By contrast, HTMX allows you to disable eval-reliant features).
-*   **Guideline:** Be aware of the security compliance required for your project. If your corporate security policies strictly forbid `unsafe-eval`, you will face friction using Datastar out-of-the-box.
+* **No CORS:** By serving all assets, API endpoints, and SSE streams from the same origin, we completely avoid the need for Cross-Origin Resource Sharing (CORS). This eliminates CORS preflight round-trips, inherently reducing latency.
+* **Simple, Secure Sessions:** Hyperlith uses a simple, unguessable random UID for managing sessions via standard HTTP-only cookies. This UID is used server-side to look up authentication and permission data in the database.
+* **CSRF Protection:** Hyperlith relies on the standard Double Submit Cookie pattern to mitigate Cross-Site Request Forgery.
+* **The `unsafe-eval` Trade-off:** 
+    * **The Standard Intuition:** Modern web apps should strictly ban `eval()` in their CSP to prevent cross-site scripting (XSS).
+    * **The Datastar Reality:** To maintain its tiny footprint and high performance, Datastar evaluates expressions using Immediately Invoked Function Expressions (IIFEs). This strictly requires `unsafe-eval` to be enabled in your CSP for scripts. (Unlike tools such as HTMX, which allow you to disable eval-reliant features, Datastar requires it).
+    * **Guideline:** Be aware of this compliance requirement. If your corporate security policies rigidly forbid `unsafe-eval` under any circumstances, you will face structural friction adopting Datastar out-of-the-box. Ensure your server-side HTML sanitization is robust to compensate for this CSP relaxation.
