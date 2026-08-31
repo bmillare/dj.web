@@ -160,53 +160,35 @@ When Datastar needs to interact with opaque subtrees owned by the client (like a
 * **Scoped MutationObservers:** If state must be derived from a browser-only API, a scoped `MutationObserver` or private JS property is appropriate. However, treat this as an integration seam, not application state. Because Idiomorph often edits attributes in-place on surviving nodes rather than replacing the node entirely, an observer that only watches for child-list mutations will likely miss changes. Ensure these observers are idempotent and account for attribute mutations.
 
 ## Embracing the Native Web Platform
-### Native Web Platform Tricks Pay Off
-*   **The standard intuition:** Framework-specific event handling (like React's synthetic events) handles optimizations for you.
-*   **The Datastar reality:** Spending too much time in modern SPAs makes developers forget native HTML tricks.
-*   **Guideline:** Leverage native DOM behaviors like **event bubbling**. Instead of attaching an `on-click` listener to 2,500 individual elements, you can attach a single listener to the top-level container, drastically cutting down on client-side memory usage while keeping the payload identical.
 
-### Native Browser Features > JS Framework Abstractions
-Many frontend frameworks provide declarative JavaScript wrappers for animations, scrolling, or window resizing. The Datastar core actively rejects these to maintain a ~10kb footprint and avoid "footguns."
-*   **The Unintuitive Insight:** You don't need a JS framework to animate things or listen to the window. Adding JS abstractions for these things introduces unnecessary support burdens and performance overhead.
-*   **The Guideline:** Leverage CSS and native DOM APIs directly.
-    *   *Animations:* You should be using native CSS for animations, not JS attributes.
-    *   *Window Events:* Use Datastar's `data-on` to listen directly to window-level resize events natively.
-    *   *Scrolling:* Simply replicate scroll behaviors natively with hooks like `data-on:load="el.scrollIntoView()"`.
+Modern Single Page Application (SPA) frameworks have spent the last decade abstracting the browser away behind virtual DOMs and synthetic event wrappers. Because of this, developers have developed a blind spot for how powerful the native web platform actually is. Datastar aggressively strips away these JavaScript abstractions to rely on the browser’s underlying C++ engine. 
 
-### Native Browser Event Bubbling > Framework Event Listeners
-* **The Standard View:** Frameworks should handle event binding. If you have a grid of 20,000 checkboxes, you attach an `onClick` handler to each component in your JS framework.
-* **The Datastar Insight:** Attaching thousands of listeners in JS is slow. Browsers inherently support "event bubbling" natively in C++. You only need a *single* event listener on the parent container.
-* **Guideline:** Use native HTML features. Put a single listener on a parent wrapper, and use `data-id` or `data-action` attributes on the children. When a child is clicked, the event bubbles up, the parent reads the data attributes, and Datastar sends it to the server. Use CSS `pointer-events: none` on things you don't want clicked.
+To succeed with Datastar, you must unlearn SPA habits and lean into native HTML, CSS, and DOM APIs.
 
----
+### 1. Leverage Native Event Bubbling for Scale
+* **The SPA Intuition:** If you have a grid of 20,000 checkboxes, you must attach an `onClick` component lifecycle handler to every single one.
+* **The Datastar Reality:** Attaching thousands of listeners in JavaScript causes severe memory and performance overhead. Browsers natively handle event bubbling in highly optimized C++.
+* **The Guideline:** Never attach thousands of identical listeners. Instead, attach a *single* `data-on:click` listener to the parent container. Place standard HTML `data-id` or `data-action` attributes on the child elements. When a child is clicked, the event natively bubbles up to the parent, which reads the attributes and triggers the server request. *(Pro-tip: Use CSS `pointer-events: none` on child elements you want the browser to ignore during the click phase).*
 
-### CSS Animations Replace Optimistic UI State
-* **The Standard View:** Because of network latency, you must write JavaScript to instantly update the UI (optimistic UI) and then roll it back if the server fails.
-* **The Datastar Insight:** You can trick the human brain using native CSS. When a user clicks, trigger a 200-300ms CSS "pop" animation on `mousedown`. By the time the animation finishes, the server round-trip has completed, and Datastar morphs the final state into place.
-* **Guideline:** Use CSS animations for immediate user feedback. Let the server remain the single source of truth for the actual data state.
+### 2. Replace "Optimistic UI" with CSS and Native Timings
+* **The SPA Intuition:** Because network latency exists, you must write complex JavaScript to instantly update the UI state locally (Optimistic UI), and write even more complex JS to roll that state back if the server request fails.
+* **The Datastar Reality:** Tricking the human brain is significantly cheaper than managing distributed state synchronization. You do not need JavaScript to make an app feel instantaneous.
+* **The Guideline:** Keep the server as the sole source of truth, and bridge the latency gap with native CSS and DOM timings:
+    * **Use `pointerdown` over `click`:** Bind your events to `data-on:pointerdown` (or `mousedown`). This fires the moment the mouse button is depressed, sending the server request fractions of a second faster than waiting for the full `click` event to complete.
+    * **CSS "Pop" Animations:** On `pointerdown`, trigger a 200–300ms CSS transition. By the time the visual animation finishes, the server round-trip has completed, and Datastar seamlessly morphs the true server state into the DOM. 
 
----
+### 3. Reject JavaScript Abstractions for UI Polish
+* **The SPA Intuition:** The framework should provide declarative JavaScript wrappers for animations, window resizing, and scrolling. 
+* **The Datastar Reality:** Adding JS abstractions for UI polish introduces unnecessary footprint, support burdens, and "footguns." Datastar refuses to bloat its ~10kb core with features the browser already has built-in.
+* **The Guideline:** Delegate UI polish to native web features.
+    * **Animations:** Use CSS animations, not JavaScript attributes. If you require highly complex choreographies, pull in a tiny, dedicated vanilla library (like `anime.js`) rather than expecting framework integration.
+    * **Window Events:** Do not use JS resize observers; use Datastar's standard syntax to listen directly to native window events (e.g., `data-on:window...`).
+    * **Scrolling:** Trigger native DOM methods directly via hooks, such as `data-on:load="el.scrollIntoView()"`.
 
-### Ugly HTML Attributes = Excellent Developer Ergonomics
-Modern frameworks often abstract logic away into separate JS files or complex component lifecycles. Datastar puts logic directly into HTML attributes using a custom DSL (e.g., `<input data-on:input__debounce.200ms="@get('/examples/active_search/search')" />`).
-* **The Unintuitive Claim:** While standard devs in the thread call this "crazy," "wrong," or a "mish-mash of different ad-hoc DSLs," the Datastar advocates argue this is the exact point of the framework. It keeps you within spec-compliant `data-*` attributes while maximizing the declarativeness of HTML.
-* **Guideline:** Keep your frontend logic minimal and declarative inside the DOM elements. Use Datastar's expression DSL in standard HTML `data-*` attributes to handle events, debouncing, and server requests without writing separate client-side JavaScript
-
----
-
-### Delegate UI Polish to Native Web Features
-When discussing features that were moved to the paid "Pro" tier (like `data-animate`), the community reveals a guideline for keeping the framework lean.
-* **The Insight:** You don't need the framework to do everything. User `hide_on_bush` points out that if you need animations, you can easily use native CSS (*"css animations go brrrr"*) or lightweight vanilla JS libraries (like `anime.js`). Datastar relies on a modular, extensible architecture rather than shipping a bloated core library.
-
----
-
-### Use `data-on:pointerdown/mousedown` over  `data-on:click`
-
-This is a small one but can make even the slowest of networks feel much snappier.
-
----
-
-Misc from readme
+### 4. Embrace "Ugly" HTML Attributes (Locality of Behavior)
+* **The SPA Intuition:** Frontend logic belongs in separate JavaScript files, hooks, or complex component lifecycles. HTML should just be a dumb template. 
+* **The Datastar Reality:** Standard SPA developers often look at Datastar and complain that it looks "crazy," "ugly," or like a "mish-mash of ad-hoc DSLs." This completely misses the point. Embedding logic directly into the HTML is the core feature, not a bug.
+* **The Guideline:** Maximize the declarativeness of your HTML. Keep your frontend logic minimal and define it completely within spec-compliant `data-*` attributes. Using Datastar’s expression DSL (e.g., `<input data-on:input__debounce.200ms="@get('/search')" />`) eliminates context-switching, removes the need for separate JS files, and keeps the behavior of the element perfectly localized to the element itself.
 
 ## Signals & Client-Side State
 
