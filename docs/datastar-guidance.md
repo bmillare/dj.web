@@ -10,7 +10,7 @@ Treat performance figures as workload reports, not universal guarantees. The
 architectural claims are hypotheses to measure against the application being
 built.
 
-## Immediate-mode HTML and streaming compression
+## Immediate-mode HTML & Streaming Compression
 
 The default approach in Datastar is highly unintuitive to developers used to traditional Single Page Applications (SPAs): **render the current view, send a large stable fragment (such as `<main>`) over a long-lived connection, and let the network and client figure out the rest.** 
 
@@ -56,7 +56,57 @@ But, wait! Won't that mean every change will cause all users to re-render? Yes, 
 
 This means you actually end up doing more work with a non-homogeneous event system under heavy load than with this simple homogeneous event system that's throttled (especially if there's any sort of common/shared view between users).
 
-## Scheduling, batching, and shared work
+## Server Ownership & The Single Source of Truth
+### The UI Model Remains Familiar (View = f(state))
+*   **The standard intuition:** Leaving React/Vue means abandoning their highly successful functional UI models.
+*   **The Datastar reality:** You are still using the exact same `view = f(state)` paradigm.
+*   **Guideline:** The only difference is where the execution happens. The view is rendered (morphed) on the client, but the `f(state)` executes entirely on the server.
+
+### "View = f(state)" Belongs on the Network, Not the Client
+**The Unintuitive Claim:** The client page shouldn't know anything about the data structure or the logic of the app.
+**The Insight (from andersmurphy & array_key_first):**
+Standard modern web dev assumes the client needs JSON to understand and render state. In Datastar, the HTML *is* the application state.
+*   The client is intentionally "dumb"—it just renders the HTML it receives.
+*   The developer experience (DX) is identical to React's `View = f(state)`, except that function runs entirely on the backend and is piped over the network.
+*   **Guideline:** Strip business logic and state management out of the browser. Write your UI as pure functions of your backend state.
+
+### Move "Locality of Behavior" (LoB) to the Backend
+* **The Standard Intuition:** Front-end code (or HTML attributes) should dictate what happens to the UI. For example, HTMX uses attributes like `hx-target` and `hx-swap` so the HTML explicitly tells the browser where to put the server's response.
+* **The Datastar Insight:** Datastar flips this to be **server-driven**. The client HTML simply says "fetch this" (e.g., `data-on:click="@get('/rebuild')"`); the server responds with an HTML fragment containing an ID, and Datastar implicitly knows to swap out the matching element.
+* **Guideline:** Keep your client-side API simple and move the routing/swapping logic to backend state. As user `sudodevnull` notes, a single line of backend code like `datastar.Patch(renderComponent(db.NextRow))` becomes the ultimate Locality of Behavior.
+
+---
+
+
+### The "Two-State" Problem is Accidental Complexity
+*   **The standard intuition:** A robust web app requires a dedicated client-side state management system (Redux, React Context, etc.) to handle the UI, which then syncs with the backend.
+*   **The reality/claim:** Because state eventually has to persist to a database, you are *already* managing it on the server. Recreating it on the client forces you to manage duplicate state, leading to synchronization bugs, diverging logic, and accidental complexity.
+*   **Guideline:** Default to "client-light" architecture. For most web applications (dashboards, eCommerce, internal tools), the extra complexity of client-side state is simply not worth the cost. Keep the source of truth purely on the server.
+
+### Eliminate the "Two Applications" Problem (Keep State on the Server)
+Modern web dev often results in building two applications: a backend that makes decisions, and a JS-heavy frontend that manages UI state. Developers then spend massive amounts of time just keeping these two states synced.
+*   **The Unintuitive Insight:** The notion that the DOM must be managed by JavaScript is a modern fallacy. Browsers are built by immensely talented C++ engineers specifically to render HTML and manage state via hypermedia.
+*   **The Guideline:** Push your state to the backend. Datastar allows you to keep almost all your state on the server, resulting in a much simpler single source of truth. However, while discouraged, Datastar *does* have a client-side signal system if you absolutely need local state for specific UX constraints.
+
+### Back-End State Management is Faster to Build and Run
+* **The Unintuitive Claim:** Keeping 99% of the state and logic on the back end reduces bugs and results in a faster initial load time.
+* **The Insight:** Modern front-end development focuses on syncing back-end databases with front-end state managers (Redux, React Context, etc.). By moving state to the back end, **JSR_FDED** notes you eliminate the headache of dealing with two sources of truth. Furthermore, **Aeolos** reported that switching from React to Datastar dropped their initial page load from 2 seconds to 0.1 seconds, reducing a 750KB JS bundle to just 20KB, and reducing network requests from 40+ to 1.
+* **Guideline:** Let the server be the single source of truth for business logic and state. Use a "Fat Services, Thin Routes" architecture where business logic lives in a core back-end library that both your UI templates and any external JSON APIs can consume.
+
+### Client State is an Illusion (Adaptive View Rendering)
+* **The Standard Intuition:** A complex UI (like a billion-item spreadsheet or massive grid) requires complex front-end data structures (e.g., virtual DOM arrays) to manage state.
+* **The Datastar Insight:** The client holds no actual state. In the massive grid examples, the billions of items live purely in a backend SQLite database. The server only pushes the HTML for what the user is currently looking at, plus a small buffer. When the user scrolls or interacts, the server simply sends the next pre-rendered view down the SSE pipe.
+
+---
+
+### Tight Coupling of Frontend and Backend is a Feature, Not a Bug
+The industry standard is to strictly decouple the frontend (e.g., React) from the backend (e.g., REST/GraphQL API) so multiple clients can consume the same JSON.
+* **The Unintuitive Claim:** Anders Murphy explicitly confirms that Datastar abandons this: *"Yeah it assumes you're building a full stack app driven by the backend. So the client and backend are tightly coupled and built for each other."*
+* **Guideline:** Build your application as a single cohesive unit. The backend doesn't serve raw data; it serves HTML fragments and behavior directly tailored to the UI.
+
+---
+
+## SSE, CQRS, and Trivial Multiplayer
 
 #### Batching
 
@@ -105,14 +155,6 @@ The simplest way to do this is to recalculate and cache values after a batch has
 
 ---
 
-### Client-Side DOM Morphing is Lightning Fast
-*   **The standard intuition:** Overwriting massive chunks of the DOM (like a 2,500-cell grid) repeatedly will freeze the browser and ruin performance.
-*   **The Datastar reality:** Datastar utilizes a highly optimized morphing algorithm under the hood. The server sends the raw, updated HTML fragment, and Datastar rapidly diffs and merges it against the existing DOM, only updating the exact elements that changed.
-*   **Guideline:** Trust the morphing algorithm. Your standard CRUD apps (and even complex grid-based games) will perform flawlessly without the overhead of a Virtual DOM.
-
----
-
-## SSE, statelessness, and server-owned views
 
 ### SSE (Server-Sent Events) > WebSockets
 *   **The standard intuition:** WebSockets are the ultimate tool for real-time, bi-directional web applications.
@@ -158,26 +200,6 @@ The only way for actions to affect the view returned by the `render-fn` running 
 
 By having a single render function per page you can simplify the reasoning about your app to `view = f(state)`. You can then reason about your pushed updates as a continuous signal rather than discrete event stream. The benefit of this is you don't have to handle missed events, disconnects and reconnects. When the state changes on the server you push down the latest view, not the delta between views. On the client idiomorph can translate that into fine grained dom updates.
 
-### The UI Model Remains Familiar (View = f(state))
-*   **The standard intuition:** Leaving React/Vue means abandoning their highly successful functional UI models.
-*   **The Datastar reality:** You are still using the exact same `view = f(state)` paradigm.
-*   **Guideline:** The only difference is where the execution happens. The view is rendered (morphed) on the client, but the `f(state)` executes entirely on the server.
-
-### "View = f(state)" Belongs on the Network, Not the Client
-**The Unintuitive Claim:** The client page shouldn't know anything about the data structure or the logic of the app.
-**The Insight (from andersmurphy & array_key_first):**
-Standard modern web dev assumes the client needs JSON to understand and render state. In Datastar, the HTML *is* the application state.
-*   The client is intentionally "dumb"—it just renders the HTML it receives.
-*   The developer experience (DX) is identical to React's `View = f(state)`, except that function runs entirely on the backend and is piped over the network.
-*   **Guideline:** Strip business logic and state management out of the browser. Write your UI as pure functions of your backend state.
-
-### The "Immediate-Mode Game Engine" Approach to the DOM
-* **The Unintuitive Claim:** You can achieve "buttery smooth" performance by re-rendering the *entire page* on the server every time the state changes, rather than calculating granular, targeted updates.
-* **The Insight:** Instead of creating dozens of micro-routes or targeted endpoints for specific UI components, developers are treating the web page like an immediate-mode game engine. You re-render the whole page state on the server and push it down. Datastar's "Fat Morphs" handle merging the changes smoothly into the existing DOM without flashing or glitching.
-* **Guideline:** Stop manually hunting for DOM elements to update. Consolidate your routing. Render the whole view (`v = f(state)`) on the server and let Datastar’s morphing do the heavy lifting.
-
----
-
 ### The "Single Long-Lived SSE Endpoint" Architecture
 **The Unintuitive Claim:** Having many small, specific endpoints for different UI components is an anti-pattern.
 **The Insight (from ndyg & throwaway7783):**
@@ -188,14 +210,54 @@ While frameworks like Turbo or standard HTMX often rely on scattered endpoints r
 
 ---
 
-### Move "Locality of Behavior" (LoB) to the Backend
-* **The Standard Intuition:** Front-end code (or HTML attributes) should dictate what happens to the UI. For example, HTMX uses attributes like `hx-target` and `hx-swap` so the HTML explicitly tells the browser where to put the server's response.
-* **The Datastar Insight:** Datastar flips this to be **server-driven**. The client HTML simply says "fetch this" (e.g., `data-on:click="@get('/rebuild')"`); the server responds with an HTML fragment containing an ID, and Datastar implicitly knows to swap out the matching element.
-* **Guideline:** Keep your client-side API simple and move the routing/swapping logic to backend state. As user `sudodevnull` notes, a single line of backend code like `datastar.Patch(renderComponent(db.NextRow))` becomes the ultimate Locality of Behavior.
+
+#### Actions should not update the view themselves directly
+
+Actions should not update the view via patch elements. This is because the changes they make would get overwritten on the next `render-fn` that pushes a new view down the updates SSE connection. However, they can still be used to update signals as those won't be changed by elements patch. This allows you to do things like validation on the server.
+
+#### CQRS
+
+- Actions modify the database and return a 204.
+- Render functions re-render when the database changes and send an update down the updates SSE connection.
 
 ---
 
-## Routing, morphing, and the native web platform
+### Hypermedia is Fully Capable of Real-Time and Collaborative Apps
+Many developers assume that HTMX/Datastar-style frameworks are only good for basic CRUD apps and that you need heavy JS frameworks for real-time collaboration.
+* **The Unintuitive Claim:** Anders Murphy routinely proves this wrong by building demos that handle real-time/collaborative applications purely using hypermedia.
+* **Guideline:** Don't default to a heavy JS client just because an app requires real-time updates.
+
+---
+
+### High Concurrency Doesn't Require High-Performance Backend Languages
+Standard web dev assumes that highly interactive, multiplayer, or realtime apps (like Game of Life or collaborative checkboxes) require heavy, highly optimized backends and complex client-side state managers.
+*   **The Unintuitive Insight:** You can handle front-page Hacker News traffic for global multiplayer applications on a $5 VPS using a "slow" dynamic language (Anders uses Clojure).
+*   **The Guideline:** Rely on foundational, highly-optimized tools rather than application-level code. By using SQLite, basic event batching, and streaming compression, you offload the hard work. The backend stays dramatically simpler because all it has to do is broadcast HTML over SSE. Follow the compression defaults and escalation order above rather than designing a fine-grained protocol pre-emptively.
+
+---
+
+### The Database *Is* the Cache (Skip Redis)
+* **The Standard View:** Hitting the disk for every user action will crash the server. You need an in-memory cache (Redis) and complex syncing logic.
+* **The Datastar Insight:** SQLite, when configured correctly (increasing memory pages), acts almost entirely as an in-memory database while retaining persistence. Anders was able to save *user scroll events* directly into SQLite in real-time on a $5 server.
+* **Guideline:** Don't build a caching layer until you absolutely have to. Write directly to SQLite. Let the database's native page management handle memory.
+
+---
+
+## Routing & DOM Morphing
+### Client-Side DOM Morphing is Lightning Fast
+*   **The standard intuition:** Overwriting massive chunks of the DOM (like a 2,500-cell grid) repeatedly will freeze the browser and ruin performance.
+*   **The Datastar reality:** Datastar utilizes a highly optimized morphing algorithm under the hood. The server sends the raw, updated HTML fragment, and Datastar rapidly diffs and merges it against the existing DOM, only updating the exact elements that changed.
+*   **Guideline:** Trust the morphing algorithm. Your standard CRUD apps (and even complex grid-based games) will perform flawlessly without the overhead of a Virtual DOM.
+
+---
+
+### The "Immediate-Mode Game Engine" Approach to the DOM
+* **The Unintuitive Claim:** You can achieve "buttery smooth" performance by re-rendering the *entire page* on the server every time the state changes, rather than calculating granular, targeted updates.
+* **The Insight:** Instead of creating dozens of micro-routes or targeted endpoints for specific UI components, developers are treating the web page like an immediate-mode game engine. You re-render the whole page state on the server and push it down. Datastar's "Fat Morphs" handle merging the changes smoothly into the existing DOM without flashing or glitching.
+* **Guideline:** Stop manually hunting for DOM elements to update. Consolidate your routing. Render the whole view (`v = f(state)`) on the server and let Datastar’s morphing do the heavy lifting.
+
+---
+
 
 #### Routing
 
@@ -276,6 +338,7 @@ Because of how the SSE patching engine works, updating elements that are vastly 
 ---
 
 
+## Embracing the Native Web Platform
 ### Native Web Platform Tricks Pay Off
 *   **The standard intuition:** Framework-specific event handling (like React's synthetic events) handles optimizations for you.
 *   **The Datastar reality:** Spending too much time in modern SPAs makes developers forget native HTML tricks.
@@ -296,51 +359,6 @@ Many frontend frameworks provide declarative JavaScript wrappers for animations,
 
 ---
 
-## Server ownership and operational behavior
-
-### The "Two-State" Problem is Accidental Complexity
-*   **The standard intuition:** A robust web app requires a dedicated client-side state management system (Redux, React Context, etc.) to handle the UI, which then syncs with the backend.
-*   **The reality/claim:** Because state eventually has to persist to a database, you are *already* managing it on the server. Recreating it on the client forces you to manage duplicate state, leading to synchronization bugs, diverging logic, and accidental complexity.
-*   **Guideline:** Default to "client-light" architecture. For most web applications (dashboards, eCommerce, internal tools), the extra complexity of client-side state is simply not worth the cost. Keep the source of truth purely on the server.
-
-### Eliminate the "Two Applications" Problem (Keep State on the Server)
-Modern web dev often results in building two applications: a backend that makes decisions, and a JS-heavy frontend that manages UI state. Developers then spend massive amounts of time just keeping these two states synced.
-*   **The Unintuitive Insight:** The notion that the DOM must be managed by JavaScript is a modern fallacy. Browsers are built by immensely talented C++ engineers specifically to render HTML and manage state via hypermedia.
-*   **The Guideline:** Push your state to the backend. Datastar allows you to keep almost all your state on the server, resulting in a much simpler single source of truth. However, while discouraged, Datastar *does* have a client-side signal system if you absolutely need local state for specific UX constraints.
-
-### Back-End State Management is Faster to Build and Run
-* **The Unintuitive Claim:** Keeping 99% of the state and logic on the back end reduces bugs and results in a faster initial load time.
-* **The Insight:** Modern front-end development focuses on syncing back-end databases with front-end state managers (Redux, React Context, etc.). By moving state to the back end, **JSR_FDED** notes you eliminate the headache of dealing with two sources of truth. Furthermore, **Aeolos** reported that switching from React to Datastar dropped their initial page load from 2 seconds to 0.1 seconds, reducing a 750KB JS bundle to just 20KB, and reducing network requests from 40+ to 1.
-* **Guideline:** Let the server be the single source of truth for business logic and state. Use a "Fat Services, Thin Routes" architecture where business logic lives in a core back-end library that both your UI templates and any external JSON APIs can consume.
-
-### Client State is an Illusion (Adaptive View Rendering)
-* **The Standard Intuition:** A complex UI (like a billion-item spreadsheet or massive grid) requires complex front-end data structures (e.g., virtual DOM arrays) to manage state.
-* **The Datastar Insight:** The client holds no actual state. In the massive grid examples, the billions of items live purely in a backend SQLite database. The server only pushes the HTML for what the user is currently looking at, plus a small buffer. When the user scrolls or interacts, the server simply sends the next pre-rendered view down the SSE pipe.
-
----
-
-### Network DevTools Will Deceive You (The "Infinite Download" Illusion)
-*   **The standard intuition:** If you open the network tab and see the page size growing to 20MB+, your frontend bundle is bloated and performance will suffer.
-*   **The reality/claim:** With Datastar, the initial load is actually microscopic (e.g., a 12kb bundle containing Datastar, initial HTML, and CSS). The massive megabyte count in the network tab is just the browser tallying the continuous stream of compressed Server-Sent Events over time.
-*   **Guideline:** Don't panic at cumulative network sizes. Measure your initial time-to-interactive and actual rendering performance, not the running total of the SSE stream.
-
----
-
-
-### Hot-Reloading Applies to *All* Connected Users Instantly
-*   **The standard intuition:** Hot-reloading is a local developer experience (DX) feature for the frontend.
-*   **The reality/claim:** Because the server is constantly streaming the UI state, modifying the server logic (like HTML, CSS, or backend rules via a REPL) instantly pushes those structural changes to *all* currently connected clients over the SSE stream.
-*   **Guideline:** Server-driven streaming architectures allow for unprecedented live-updates without requiring users to refresh their browsers or restart the server.
-
----
-
-### Visibility-Based Pruning Mitigates Resource Limits
-*   **The standard intuition:** Maintaining a persistent connection for every user will exhaust connection pools (especially on HTTP/1.1 limits of 6 per browser) and drain mobile batteries.
-*   **The reality/claim:** Datastar intelligently hooks into the browser's Page Visibility API. If the user switches tabs or minimizes the window, Datastar can prune the connection.
-*   **Guideline:** While you should strongly prefer HTTP/2 (which negotiates around 100 connections by default), you can rely on the visibility API to aggressively save client battery life and server resources when the app isn't actively being viewed.
-
----
-
 ### CSS Animations Replace Optimistic UI State
 * **The Standard View:** Because of network latency, you must write JavaScript to instantly update the UI (optimistic UI) and then roll it back if the server fails.
 * **The Datastar Insight:** You can trick the human brain using native CSS. When a user clicks, trigger a 200-300ms CSS "pop" animation on `mousedown`. By the time the animation finishes, the server round-trip has completed, and Datastar morphs the final state into place.
@@ -348,33 +366,28 @@ Modern web dev often results in building two applications: a backend that makes 
 
 ---
 
-### Spotty Connectivity is Fine, but "Offline Mode" is Impossible
-*   **The standard intuition:** If an app requires constant server contact to render UI, it will be unusable on mobile devices with unreliable connections.
-*   **The reality/claim:** SSE can handle spotty connections (like 3G) gracefully when the client uses a durable retry policy such as `retry: 'always'`. However, because there is no client-side state, a true "offline mode" (like saving items to an offline cart) is structurally impossible.
-*   **Guideline:** Assess your app's true offline requirements before adopting Datastar. If you need optimistic UI updates during total network death, this architecture isn't a fit. If you just need it to survive subway tunnels and bad 3G, SSE handles it seamlessly.
-
-### Network Reliability: Sockets vs. Custom JS Timeouts
-**The Standard View:** SPAs (React/Vue) handle bad networks better because the client is loaded and you can elegantly manage loading states and retries via JavaScript.
-**The Datastar Insight (withinboredom):**
-* SPAs on 2G/3G often fail to load entirely because "enterprising engineers usually invent their own timeouts that make no sense when you are dealing with bytes-per-second."
-* Standard HTML requests rely on native browser socket behavior, which intrinsically knows if it is still receiving bytes (even slowly) and won't prematurely kill the request. HTML rendering actually proves more resilient in ultra-low bandwidth scenarios.
-
-### PWA and Offline Support Doesn't Require an SPA
-A common critique is that server-driven HTML frameworks cannot work offline (unlike SPAs which can hold state in JS).
-* **The Unintuitive Claim:** You can achieve offline support by simply caching the backend-generated HTML (which already contains the declarative Datastar attributes) using a Service Worker. The Datastar library running in the main thread doesn't care if the HTML came from the backend, an edge worker, or a service worker cache.
-* **Guideline:** For offline capabilities, shift your caching strategy to the Service Worker level rather than duplicating state management in the browser.
-
+### Ugly HTML Attributes = Excellent Developer Ergonomics
+Modern frameworks often abstract logic away into separate JS files or complex component lifecycles. Datastar puts logic directly into HTML attributes using a custom DSL (e.g., `<input data-on:input__debounce.200ms="@get('/examples/active_search/search')" />`).
+* **The Unintuitive Claim:** While standard devs in the thread call this "crazy," "wrong," or a "mish-mash of different ad-hoc DSLs," the Datastar advocates argue this is the exact point of the framework. It keeps you within spec-compliant `data-*` attributes while maximizing the declarativeness of HTML.
+* **Guideline:** Keep your frontend logic minimal and declarative inside the DOM elements. Use Datastar's expression DSL in standard HTML `data-*` attributes to handle events, debouncing, and server requests without writing separate client-side JavaScript
 
 ---
 
-### The Security Trade-off: `unsafe-eval` is Required
-*   **The standard intuition:** Modern secure web apps should strictly ban `eval()` in their Content Security Policies (CSP) to prevent cross-site scripting (XSS).
-*   **The reality/claim:** Datastar evaluates expressions using Immediately Invoked Function Expressions (IIFEs), which strictly requires `unsafe-eval` to be enabled in your CSP for scripts. (By contrast, HTMX allows you to disable eval-reliant features).
-*   **Guideline:** Be aware of the security compliance required for your project. If your corporate security policies strictly forbid `unsafe-eval`, you will face friction using Datastar out-of-the-box.
+### Delegate UI Polish to Native Web Features
+When discussing features that were moved to the paid "Pro" tier (like `data-animate`), the community reveals a guideline for keeping the framework lean.
+* **The Insight:** You don't need the framework to do everything. User `hide_on_bush` points out that if you need animations, you can easily use native CSS (*"css animations go brrrr"*) or lightweight vanilla JS libraries (like `anime.js`). Datastar relies on a modular, extensible architecture rather than shipping a bloated core library.
 
 ---
 
-## Signals
+#### Use `data-on:pointerdown/mousedown` over  `data-on:click`
+
+This is a small one but can make even the slowest of networks feel much snappier.
+
+---
+
+Misc from readme
+
+## Signals & Client-Side State
 
 #### Signals are only for ephemeral client-side state
 
@@ -405,16 +418,59 @@ Standard hypermedia frameworks (like HTMX) rely almost entirely on DOM-swapping 
 
 ---
 (Brent comment: this is important for actual in practice applications)
-## Commands, CQRS, and broader design principles
+### Complex UI (Animations/Grids) is Solved via Web Components + Datastar
+When faced with complex client-side requirements (like data grids or interactive canvas animations), developers usually reach for React components.
+* **The Unintuitive Claim:** You can bridge the gap using tiny, vanilla Web Components driven by Datastar signals. For example, the complex "slick Star space animation" on the Datastar homepage is just a *"basic 1kb web component driven by datastar attributes."*
+* **Guideline:** If you need highly specialized client-side execution that HTML plus Datastar expressions cannot reasonably express, wrap it in a lightweight Web Component and use signals and host attributes to drive its public surface. Let Datastar keep morphing the host when that contract is safe; add an ignored-morph boundary only when the component truly owns an opaque subtree or lifecycle. Do not introduce a Web Component for ordinary signal-driven UI.
 
-#### Actions should not update the view themselves directly
+---
 
-Actions should not update the view via patch elements. This is because the changes they make would get overwritten on the next `render-fn` that pushes a new view down the updates SSE connection. However, they can still be used to update signals as those won't be changed by elements patch. This allows you to do things like validation on the server.
+## Operational Behaviors & Security
+### Network DevTools Will Deceive You (The "Infinite Download" Illusion)
+*   **The standard intuition:** If you open the network tab and see the page size growing to 20MB+, your frontend bundle is bloated and performance will suffer.
+*   **The reality/claim:** With Datastar, the initial load is actually microscopic (e.g., a 12kb bundle containing Datastar, initial HTML, and CSS). The massive megabyte count in the network tab is just the browser tallying the continuous stream of compressed Server-Sent Events over time.
+*   **Guideline:** Don't panic at cumulative network sizes. Measure your initial time-to-interactive and actual rendering performance, not the running total of the SSE stream.
 
-#### CQRS
+---
 
-- Actions modify the database and return a 204.
-- Render functions re-render when the database changes and send an update down the updates SSE connection.
+
+### Hot-Reloading Applies to *All* Connected Users Instantly
+*   **The standard intuition:** Hot-reloading is a local developer experience (DX) feature for the frontend.
+*   **The reality/claim:** Because the server is constantly streaming the UI state, modifying the server logic (like HTML, CSS, or backend rules via a REPL) instantly pushes those structural changes to *all* currently connected clients over the SSE stream.
+*   **Guideline:** Server-driven streaming architectures allow for unprecedented live-updates without requiring users to refresh their browsers or restart the server.
+
+---
+
+### Visibility-Based Pruning Mitigates Resource Limits
+*   **The standard intuition:** Maintaining a persistent connection for every user will exhaust connection pools (especially on HTTP/1.1 limits of 6 per browser) and drain mobile batteries.
+*   **The reality/claim:** Datastar intelligently hooks into the browser's Page Visibility API. If the user switches tabs or minimizes the window, Datastar can prune the connection.
+*   **Guideline:** While you should strongly prefer HTTP/2 (which negotiates around 100 connections by default), you can rely on the visibility API to aggressively save client battery life and server resources when the app isn't actively being viewed.
+
+---
+
+### Spotty Connectivity is Fine, but "Offline Mode" is Impossible
+*   **The standard intuition:** If an app requires constant server contact to render UI, it will be unusable on mobile devices with unreliable connections.
+*   **The reality/claim:** SSE can handle spotty connections (like 3G) gracefully when the client uses a durable retry policy such as `retry: 'always'`. However, because there is no client-side state, a true "offline mode" (like saving items to an offline cart) is structurally impossible.
+*   **Guideline:** Assess your app's true offline requirements before adopting Datastar. If you need optimistic UI updates during total network death, this architecture isn't a fit. If you just need it to survive subway tunnels and bad 3G, SSE handles it seamlessly.
+
+### Network Reliability: Sockets vs. Custom JS Timeouts
+**The Standard View:** SPAs (React/Vue) handle bad networks better because the client is loaded and you can elegantly manage loading states and retries via JavaScript.
+**The Datastar Insight (withinboredom):**
+* SPAs on 2G/3G often fail to load entirely because "enterprising engineers usually invent their own timeouts that make no sense when you are dealing with bytes-per-second."
+* Standard HTML requests rely on native browser socket behavior, which intrinsically knows if it is still receiving bytes (even slowly) and won't prematurely kill the request. HTML rendering actually proves more resilient in ultra-low bandwidth scenarios.
+
+### PWA and Offline Support Doesn't Require an SPA
+A common critique is that server-driven HTML frameworks cannot work offline (unlike SPAs which can hold state in JS).
+* **The Unintuitive Claim:** You can achieve offline support by simply caching the backend-generated HTML (which already contains the declarative Datastar attributes) using a Service Worker. The Datastar library running in the main thread doesn't care if the HTML came from the backend, an edge worker, or a service worker cache.
+* **Guideline:** For offline capabilities, shift your caching strategy to the Service Worker level rather than duplicating state management in the browser.
+
+
+---
+
+### The Security Trade-off: `unsafe-eval` is Required
+*   **The standard intuition:** Modern secure web apps should strictly ban `eval()` in their Content Security Policies (CSP) to prevent cross-site scripting (XSS).
+*   **The reality/claim:** Datastar evaluates expressions using Immediately Invoked Function Expressions (IIFEs), which strictly requires `unsafe-eval` to be enabled in your CSP for scripts. (By contrast, HTMX allows you to disable eval-reliant features).
+*   **Guideline:** Be aware of the security compliance required for your project. If your corporate security policies strictly forbid `unsafe-eval`, you will face friction using Datastar out-of-the-box.
 
 ---
 
@@ -425,69 +481,12 @@ Standard web dev heavily emphasizes strict static typing (like TypeScript) to ma
 
 ---
 
-### Tight Coupling of Frontend and Backend is a Feature, Not a Bug
-The industry standard is to strictly decouple the frontend (e.g., React) from the backend (e.g., REST/GraphQL API) so multiple clients can consume the same JSON.
-* **The Unintuitive Claim:** Anders Murphy explicitly confirms that Datastar abandons this: *"Yeah it assumes you're building a full stack app driven by the backend. So the client and backend are tightly coupled and built for each other."*
-* **Guideline:** Build your application as a single cohesive unit. The backend doesn't serve raw data; it serves HTML fragments and behavior directly tailored to the UI.
-
----
-
-### Hypermedia is Fully Capable of Real-Time and Collaborative Apps
-Many developers assume that HTMX/Datastar-style frameworks are only good for basic CRUD apps and that you need heavy JS frameworks for real-time collaboration.
-* **The Unintuitive Claim:** Anders Murphy routinely proves this wrong by building demos that handle real-time/collaborative applications purely using hypermedia.
-* **Guideline:** Don't default to a heavy JS client just because an app requires real-time updates.
-
----
-
-### Ugly HTML Attributes = Excellent Developer Ergonomics
-Modern frameworks often abstract logic away into separate JS files or complex component lifecycles. Datastar puts logic directly into HTML attributes using a custom DSL (e.g., `<input data-on:input__debounce.200ms="@get('/examples/active_search/search')" />`).
-* **The Unintuitive Claim:** While standard devs in the thread call this "crazy," "wrong," or a "mish-mash of different ad-hoc DSLs," the Datastar advocates argue this is the exact point of the framework. It keeps you within spec-compliant `data-*` attributes while maximizing the declarativeness of HTML.
-* **Guideline:** Keep your frontend logic minimal and declarative inside the DOM elements. Use Datastar's expression DSL in standard HTML `data-*` attributes to handle events, debouncing, and server requests without writing separate client-side JavaScript
-
----
-
-### Complex UI (Animations/Grids) is Solved via Web Components + Datastar
-When faced with complex client-side requirements (like data grids or interactive canvas animations), developers usually reach for React components.
-* **The Unintuitive Claim:** You can bridge the gap using tiny, vanilla Web Components driven by Datastar signals. For example, the complex "slick Star space animation" on the Datastar homepage is just a *"basic 1kb web component driven by datastar attributes."*
-* **Guideline:** If you need highly specialized client-side execution that HTML plus Datastar expressions cannot reasonably express, wrap it in a lightweight Web Component and use signals and host attributes to drive its public surface. Let Datastar keep morphing the host when that contract is safe; add an ignored-morph boundary only when the component truly owns an opaque subtree or lifecycle. Do not introduce a Web Component for ordinary signal-driven UI.
-
----
-
-### High Concurrency Doesn't Require High-Performance Backend Languages
-Standard web dev assumes that highly interactive, multiplayer, or realtime apps (like Game of Life or collaborative checkboxes) require heavy, highly optimized backends and complex client-side state managers.
-*   **The Unintuitive Insight:** You can handle front-page Hacker News traffic for global multiplayer applications on a $5 VPS using a "slow" dynamic language (Anders uses Clojure).
-*   **The Guideline:** Rely on foundational, highly-optimized tools rather than application-level code. By using SQLite, basic event batching, and streaming compression, you offload the hard work. The backend stays dramatically simpler because all it has to do is broadcast HTML over SSE. Follow the compression defaults and escalation order above rather than designing a fine-grained protocol pre-emptively.
-
----
-
 ### Code Must Be Defended by Hard Metrics, Not "Best Practices"
 Because Datastar challenges standard web development conventions, "industry standard" arguments don't hold weight.
 * **The Insight:** `sudodevnull` emphasizes a strict, data-driven engineering culture: *"If you can't backup your ideas or defend your code with metrics you are gonna have a bad time."* The guideline here is that to build fast Datastar apps, you must measure actual performance (e.g., rendering speed, payload size) rather than relying on theoretical "best practices."
 
 ---
 
-### The Database *Is* the Cache (Skip Redis)
-* **The Standard View:** Hitting the disk for every user action will crash the server. You need an in-memory cache (Redis) and complex syncing logic.
-* **The Datastar Insight:** SQLite, when configured correctly (increasing memory pages), acts almost entirely as an in-memory database while retaining persistence. Anders was able to save *user scroll events* directly into SQLite in real-time on a $5 server.
-* **Guideline:** Don't build a caching layer until you absolutely have to. Write directly to SQLite. Let the database's native page management handle memory.
-
----
-
-### Delegate UI Polish to Native Web Features
-When discussing features that were moved to the paid "Pro" tier (like `data-animate`), the community reveals a guideline for keeping the framework lean.
-* **The Insight:** You don't need the framework to do everything. User `hide_on_bush` points out that if you need animations, you can easily use native CSS (*"css animations go brrrr"*) or lightweight vanilla JS libraries (like `anime.js`). Datastar relies on a modular, extensible architecture rather than shipping a bloated core library.
-
----
-
-#### Use `data-on:pointerdown/mousedown` over  `data-on:click`
-
-This is a small one but can make even the slowest of networks feel much snappier.
-
----
-
-Misc from readme
-
-## Other radical choices
 
 #### No CORS
 
