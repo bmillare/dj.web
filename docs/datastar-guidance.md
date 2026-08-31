@@ -114,80 +114,50 @@ Because of this architecture, many traditional backend complexities simply vanis
 *   **High concurrency does not require "fast" backend languages:** You do not need highly optimized, low-level backends to handle massive traffic. Because the heavy lifting is offloaded to SQLite, event batching, and standard HTTP streaming compression, a basic script in a "slow" dynamic language on a $5 VPS can easily survive Hacker News front-page traffic for a global multiplayer application.
 
 ## Routing & DOM Morphing
-### Client-Side DOM Morphing is Lightning Fast
-*   **The standard intuition:** Overwriting massive chunks of the DOM (like a 2,500-cell grid) repeatedly will freeze the browser and ruin performance.
-*   **The Datastar reality:** Datastar utilizes a highly optimized morphing algorithm under the hood. The server sends the raw, updated HTML fragment, and Datastar rapidly diffs and merges it against the existing DOM, only updating the exact elements that changed.
-*   **Guideline:** Trust the morphing algorithm. Your standard CRUD apps (and even complex grid-based games) will perform flawlessly without the overhead of a Virtual DOM.
 
----
+Building with Datastar requires a fundamental shift in how you think about routing, navigation, and DOM manipulation. Standard Single Page Application (SPA) heuristics—such as highly granular REST endpoints, complex client-side virtual routers, and surgical DOM updates—are actually anti-patterns here. 
 
-### Rendering an initial shim
+### The Flat Router and the Death of REST
+In traditional SPA or even basic HTMX development, developers often create an explosion of granular endpoints to fetch specific JSON payloads or localized HTML fragments. Datastar drastically reduces back-end routing complexity, often **deleting 50% or more of your routing table.**
 
-Rather than returning the whole page on initial render and having two render paths, one for initial render and one for subsequent rendering a shell is rendered and then populated when the page connects to the updates endpoint for that page. This has a few advantages:
+* **Flat Routing Maps over Radix Trees:** Treat your router as a simple map. Avoid path parameters (e.g., `/users/:id`). Path parameters force you into arbitrary hierarchies and "place-oriented programming" that often turn out to be wrong as the app evolves. By removing them and using query or body parameters instead, your routing becomes a simple, flat map that performs exceptionally well.
+* **Default to One Route Per Page:** Write applications like the old days of simple full-page flows. Render the whole view (`v = f(state)`) on the server, and rely on Datastar’s SSE connection to handle the interactive, in-page updates.
 
-- The page will only render dynamic content if the user has javascript and first party cookies enabled.
+### The Initial Shim (Optimizing the First Render)
+Rather than executing a heavy server render on the initial `GET` request (requiring two render paths: one for the initial page, one for subsequent updates), Datastar encourages rendering a lightweight "shim" or shell. 
+1. The server returns a static HTML shell (which can be generated and compressed once).
+2. The page connects to the Datastar SSE updates endpoint.
+3. The server populates the dynamic content into the shell.
 
-- The initial shell page can generated and compressed once.
-
-- The server only does more work for actual users and less work for link preview crawlers and other bots (that don't support javascript or cookies).
-
----
-
-### The "Immediate-Mode Game Engine" Approach to the DOM
-* **The Unintuitive Claim:** You can achieve "buttery smooth" performance by re-rendering the *entire page* on the server every time the state changes, rather than calculating granular, targeted updates.
-* **The Insight:** Instead of creating dozens of micro-routes or targeted endpoints for specific UI components, developers are treating the web page like an immediate-mode game engine. You re-render the whole page state on the server and push it down. Datastar's "Fat Morphs" handle merging the changes smoothly into the existing DOM without flashing or glitching.
-* **Guideline:** Stop manually hunting for DOM elements to update. Consolidate your routing. Render the whole view (`v = f(state)`) on the server and let Datastar’s morphing do the heavy lifting.
-
----
-
-### Deleting 50% of Your Routing Table
-* **The Unintuitive Claim:** Moving away from a REST/JSON API for your front-end drastically *reduces* back-end routing complexity.
-* **The Insight:** In traditional SPA or even basic HTMX development, developers often create an explosion of endpoints to fetch specific HTML fragments or JSON payloads for localized state updates. Because Datastar allows you to efficiently push full-page morphs over SSE, **Aeolos** noted they were able to remove ~50% of their routing table.
-* **Guideline:** Default to "one route per page." Write applications like the old days of simple full-page flows, and rely on Datastar’s SSE + morphs to prevent actual page reloads.
-
-### Routing
-
-Router is a simple map, this means path parameters are not supported use query parameters or body instead. I've found over time that path parameters force you to adopt an arbitrary hierarchy that is often wrong (and place oriented programming). Removing them avoids this and means routing can be simplified to a map and have better performance than a more traditional adaptive radix tree router.
+This offers significant advantages: dynamic content is only rendered and processed if the user actually has JavaScript and first-party cookies enabled. The server does less heavy lifting for link-preview crawlers and bots, saving expensive compute strictly for real users.
 
 ### Navigation vs. Morphing (Avoiding "Magic" Footguns)
-**The Standard View:** To make an app feel fast, you should intercept all link clicks, prevent full page reloads, and swap out the URL and page contents using JavaScript (like Hotwire Turbo or standard SPA routers).
-**The Datastar Insight (nchmy):**
-* Simulating page transitions on the client creates "magical" footguns that are difficult to debug and manage.
-* **The Guideline:** Embrace traditional HATEOAS. If you are changing the actual page, just do a full page reload. Reserve Datastar’s SSE fragment morphing specifically for **ephemeral, in-page state changes** (like toggling buttons, updating live data, or submitting a form).
+To make applications feel fast, SPA developers have been trained to intercept all link clicks, prevent full page reloads, and swap out the URL and page contents using JavaScript (like Hotwire Turbo or React Router). 
 
-### Exceptional integration seams
+**Datastar’s stance is the opposite:** Simulating full page transitions on the client creates "magical" footguns that are notoriously difficult to debug and manage. Embrace traditional HATEOAS. If the user is fundamentally navigating to a new page, **just do a full page reload.** Reserve Datastar’s SSE fragment morphing strictly for ephemeral, in-page state changes—like toggling buttons, updating live data, or submitting forms.
 
-Use `data-ignore-morph` when the client or an external component owns an opaque
-subtree, and emit it consistently in the server-rendered markup. Use
-`data-preserve-attr` when the browser narrowly owns a named attribute. Preserving
-an entire `class` attribute is especially sharp because it also prevents the
-server from changing any class on that element.
+### The "Immediate-Mode Game Engine" Approach to the DOM
+The standard web developer intuition assumes that overwriting massive chunks of the DOM (like a 2,500-cell data grid) repeatedly will freeze the browser and ruin performance. As a result, developers spend immense effort writing logic to target and update single nodes.
 
-A scoped `MutationObserver` or private JavaScript property can be appropriate
-inside an owning component when state must be derived from a browser-only API.
-Keep that mechanism private and idempotent; it is an integration seam, not an
-application state model. In particular, Idiomorph may edit attributes on a
-surviving node, so an observer that truly derives browser decoration cannot
-assume that watching only child-list mutations is sufficient.
+With Datastar, you should treat the web page like an **immediate-mode game engine.**
+* **Fat Morphs:** You can achieve buttery-smooth performance by re-rendering the *entire* page state on the server every time the state changes. The server sends the raw, updated HTML fragment down the SSE stream. Datastar utilizes Idiomorph under the hood to rapidly diff and merge it against the existing DOM, updating only the exact elements that changed. 
+* **Updating Disjointed UI is Cheap:** Updating multiple, unrelated parts of a page normally requires complex global state management (like Redux). With Datastar, it is trivial. If a user clicks a button, the server can effortlessly push an update to that button, push a toast notification to the top of the screen, and update a cart counter in the header, all in a single SSE stream. 
+* **Trust the Morph:** Stop manually hunting for DOM elements. It is often much simpler (and perfectly performant) to replace an entire list over the wire rather than writing fragile edge-case logic to update a single item within it.
 
 ### Let the Framework Handle the UI Edge Cases
-**The Unintuitive Claim:** Doing simple DOM swaps yourself in vanilla JS is fundamentally broken for production apps.
-**The Insight (from sudodevnull):**
-While one might think `selector.outerHTML = await fetch()` is all you need, doing it manually ignores massive edge cases.
-*   Datastar handles complex UI state issues that usually require bloated JS shims, such as reconnecting on tab visibility changes and maintaining text/cursor selection when an element is swapped out from underneath the user. With the default `openWhenHidden: false`, Datastar closes the stream while hidden and reopens it when visible, avoiding idle work while returning to current state. Reopening a successfully started stream after it ends for other reasons requires `retry: 'always'`; it is not provided by the default retry policy.
-*   Despite handling these edge cases, Datastar maintains a tiny footprint (40% smaller than HTMX).
-*   **Guideline:** Rely on the framework for DOM patching. Don't write custom JS to manipulate the DOM, as you will likely break the graceful handling of these edge cases.
+Do not attempt to write vanilla JS to handle DOM swaps (e.g., `selector.outerHTML = await fetch()`). While it sounds simple, it is fundamentally broken for production apps.
 
-### Updating Disjointed UI Elements is Cheap
-**The Unintuitive Claim:** Updating multiple, unrelated parts of a page requires complex global state management (like Redux).
-**The Insight (from pragma_x & hunvreus):**
-Because of how the SSE patching engine works, updating elements that are vastly separated in the DOM is trivial.
-*   If a user clicks a button, the server can effortlessly push an update to that button, push a toast notification to the top of the screen, and update a cart counter in the header, all in one stream.
-*   It is often much simpler (and perfectly performant) to replace an entire list rather than writing edge-case logic to update a single item within that list.
-*   **Guideline:** Don't fear updating multiple separate elements or replacing entire blocks of HTML (like whole lists). The framework's patching engine and network compression make "fat morphs" highly efficient.
+Despite being 40% smaller than HTMX, Datastar's patching engine automatically handles complex UI edge cases that usually require bloated JavaScript shims:
+* **Cursor and Focus State:** Datastar maintains text and cursor selection seamlessly even when an element is morphing out from underneath the user.
+* **Visibility Pruning:** With the default `openWhenHidden: false`, Datastar closes the SSE stream when the tab is hidden and reopens it when it becomes visible again. This prevents the browser and server from doing idle work while the user is away, and instantly fetches the most current state upon their return. 
+* **Stream Retries:** Note that reopening a successfully started stream after it ends for other reasons requires explicitly setting `retry: 'always'` (it is not provided by the default retry policy). 
 
----
+### Exceptional Integration Seams (Escaping the Morph)
+When Datastar needs to interact with opaque subtrees owned by the client (like a complex 3rd-party JS charting library) or attributes narrowly owned by the browser, you must define integration seams. 
 
+* Use **`data-ignore-morph`** on elements to tell Datastar to leave an entire subtree alone. Emit this consistently in your server-rendered markup.
+* Use **`data-preserve-attr`** to protect specific attributes from being overwritten by the server. *Warning:* Preserving an entire `class` attribute is exceptionally sharp, as it prevents the server from changing *any* class on that element in the future.
+* **Scoped MutationObservers:** If state must be derived from a browser-only API, a scoped `MutationObserver` or private JS property is appropriate. However, treat this as an integration seam, not application state. Because Idiomorph often edits attributes in-place on surviving nodes rather than replacing the node entirely, an observer that only watches for child-list mutations will likely miss changes. Ensure these observers are idempotent and account for attribute mutations.
 
 ## Embracing the Native Web Platform
 ### Native Web Platform Tricks Pay Off
