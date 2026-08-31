@@ -29,7 +29,9 @@ no Ring or external web-server dependency.
 The architecture and application opinions behind this stack are preserved in
 [Datastar application guidance](docs/datastar-guidance.md). The central idea is
 simple: commit authoritative state, wake the relevant subscriptions, render the
-latest view, and let Datastar morph it into the browser DOM.
+latest view, stream it with compression, and let Datastar morph it into the
+browser DOM. The gzip mechanism, measured bounds, and escalation order are in
+[Streaming compression: mechanism, evidence, and escalation](docs/streaming-compression.md).
 
 Concrete REPL, lifecycle, incremental-adoption, and gzip-test findings are in
 [Internal lessons from a real consumer](docs/internal-lessons.md).

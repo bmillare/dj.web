@@ -1,10 +1,10 @@
 # Datastar application guidance
 
 These consolidated guidelines were drawn from Anders Murphy's Hyperlith README
-and from comments and blog posts about Datastar. They preserve the source
-material's overlapping arguments and examples rather than collapsing them into
-a shorter summary. Headings and grouping have been cleaned up for navigation;
-the prose is otherwise substantially preserved.
+and from comments and blog posts about Datastar. They turn the recurring ideas
+in that source material into defaults an application can act on. Linked deep
+dives preserve the mechanisms, measurements, and qualifications behind those
+defaults.
 
 Treat performance figures as workload reports, not universal guarantees. The
 architectural claims are hypotheses to measure against the application being
@@ -12,67 +12,64 @@ built.
 
 ## Immediate-mode HTML and streaming compression
 
----
+### Default to coarse morphs and let compression do the byte-level work
 
-#### Why large/fat/main morphs (immediate mode)?
+The Datastar default is deliberately biased: render the current view, send a
+large stable fragment such as `<main>` over a long-lived compressed SSE
+connection, and let Idiomorph reconcile it with the browser DOM. Do not begin by
+inventing server-side view diffs, a route per component, shortened identifiers,
+or client-side state synchronization in anticipation of a bandwidth problem.
+Those designs make the application track more identities, deltas, and failure
+states before evidence says that complexity is needed.
 
-By using Datastar v1.0.2's default `outer` morphing/Idiomorph mode (normally with no mode line) and always targeting the `main` element of the document the API can be massively simplified. This avoids having the explosion of endpoints you get with HTMX and makes reasoning about your app much simpler. The other supported modes are `remove`, `inner`, `replace`, `prepend`, `append`, `before`, and `after`; there is no `morph` mode, and `replace` is the non-morphing replacement.
+Streaming compression and morphing solve different halves of this model.
+Compression exploits repeated HTML bytes on the wire; Idiomorph preserves and
+updates the corresponding browser nodes. Together they make a coarse
+`view = f(state)` render the preferred starting point. Reports collected from
+experienced Datastar applications, and measurements from a dj.web consumer,
+both support this bias. Performance figures remain workload reports rather than
+universal guarantees.
 
-#### Why no diffing?
+dj.web's subscribed transport negotiates one connection-long gzip stream by
+default. Gzip has two useful regimes:
 
-In theory you can optimise network and remove the need for idiomorph if you do diffing between the last view and the current view. However, in practice because the SSE stream is being compressed for the duration of a connection and html compresses really well you get amazing compression (reduction in size by 90-100x! Sometimes more) over a series of view re-renders. The compression is so good that in my experience it's more network efficient and more performant that fine grained updates with diffing (without any of the additional  complexity).
+1. While matching content remains inside DEFLATE's 32 KiB history window, a
+   changed frame can benefit from the previous frame and approach delta-like
+   wire cost.
+2. Once matching content falls outside that window, cross-frame reuse stops,
+   but gzip still compresses redundancy within the new frame. A repetitive
+   large view can therefore remain very cheap; a similarly sized high-entropy
+   view may not.
 
-This approach avoids the additional challenges of view and session maintenance (increased server load and memory usage).
+The practical rule is still **start coarse and compressed**. Measure
+representative changed frames at the real update cadence after the application
+works. Size alone is not a reason to fragment a view, and the 32 KiB boundary is
+not a command to create smaller endpoints.
 
-My suspicion is websocket approaches in this space like Phoenix Liveview haven't stumbled across this because you don't get compression out of the box with websockets, and idiomorph is a relatively new invention. Intuitively you would think the diffing approach would be more performant so you wouldn't even consider this approach.
+### Escalate only from a measured bottleneck
 
----
+If wire traffic is materially expensive, determine whether the cost comes from
+update frequency, high-entropy content, or the loss of cross-frame reuse. Prefer
+the smallest lever that preserves the simple current-state model: batch or
+conflate unnecessary updates, bound unusually large high-entropy content, or
+partition at a natural ownership or update-frequency boundary. Consider narrower
+morph targets only when they remain easy to reason about, not merely to imitate
+hand-written diffs.
 
-### The Bandwidth Math is Flipped: Full HTML > JSON & Diffs
-*   **The standard intuition:** Streaming the entire `<main>` HTML element of a page from the server every 200ms would absolutely destroy network bandwidth.
-*   **The Datastar reality:** Streaming compression over Server-Sent Events (SSE) completely alters this calculation. Because you are sending repeating structural HTML, algorithms like Brotli compression achieve staggering **100-230:1 compression ratios** over continuous backend re-renders.
-*   **Guideline:** Do not waste time building complex logic for fine-grained updates or diffing. Rendering and compressing the full DOM fragment is often *more* network-efficient and performant than sending granular data updates, completely avoiding the complexity of state synchronization.
+If large changed views would benefit from a longer compression history, measure
+Brotli before redesigning the application protocol. Brotli can use a much larger
+window than DEFLATE and is a natural next transport to consider. It is not
+currently built into dj.web, but a consumer can provide it at its HTTP boundary
+or contribute negotiated support when the need is demonstrated.
 
-### Brotli Compression is your "Virtual DOM" over the Wire
-* **The Standard View:** Sending full HTML views from the server is bloated. You must send JSON and use client-side JS to diff and render the UI to save bandwidth.
-* **The Datastar Insight:** Send the *entire HTML view* over the wire and let the web server's Brotli compression handle the rest. Because the HTML structure mostly stays the same frame-to-frame (only tiny things like colors or "checked" attributes change), Brotli can achieve absurd compression ratios (up to 9,000-to-1).
-* **Guideline:** Stop worrying about long class names, short IDs, or trimming HTML payloads. Send the full HTML snippet. A single update for a massive grid of checkboxes compresses down to just 13 bytes.
+Compression does not make server queries, HTML rendering, DOM size, or browser
+morphing free. In practice those backend workloads often become the next
+bottleneck—which is a reason to measure them independently, not a reason to
+abandon coarse compressed morphs pre-emptively.
 
-### The Streaming Compression Exploit (5000:1 Ratios)
-* **The Unintuitive Claim:** Sending full HTML payloads over the wire is somehow *more* bandwidth-efficient than sending tiny, granular JSON payloads.
-* **The Insight:** When you keep an HTTP connection open using Server-Sent Events (SSE) and apply streaming compression (like Brotli or Zstd), the compression algorithm maintains a context window of the data. If you send a 65KB HTML "fat morph" frame, but only a single checkbox changed, the compression algorithm will only send the diff (about 13 bytes over the wire). **Aeolos** and **andersmurphy** report staggering 5000:1 and 800:1 compression ratios.
-* **Guideline:** Use SSE combined with streaming compression. This changes the math of bandwidth limits, making HTML-over-the-wire incredibly cheap and efficient.
-
-### The "Math" of Payload Size vs. Compression on Slow Connections
-**The Standard View:** Returning HTML blobs instead of minimal JSON payloads over multiple requests will degrade the user experience on slow connections (3G/2G) because it consumes too much bandwidth and incurs too many round-trip penalties.
-**The Datastar Insight (Anders Murphy & nchmy):**
-* **Compression Changes the Math:** Brotli compression handles HTML exceptionally well. Because HTML over an SSE (Server-Sent Events) stream has a lot of redundant information, compression ratios routinely hit "north of 90%."
-* **Connection Priming:** While the initial load might take a few seconds on a 3G network, Anders Murphy notes that "subsequent interactions which each require a network hop... are lightning fast. Because once that connection is primed you are off to the races."
-* **Device Bottlenecks:** Slow internet is almost always paired with slow device hardware. React and CSS-in-JS require massive CPU overhead to parse and execute large JS bundles. Sending compressed HTML shifts the burden away from the weak client device back to the server, resulting in faster time-to-interactive.
-
-### The "Dumb" Immediate-Mode Rendering Approach Actually Scales Best
-In traditional frontend development, sending the entire DOM over the network for every update is considered a massive performance anti-pattern. Datastar flips this completely.
-*   **The Unintuitive Insight:** You don't need to write complex backend logic to calculate granular diffs (e.g., only updating a specific changed checkbox). You can stream the *entire DOM* with each Server-Sent Events (SSE) message and let Datastar's "fat morph model" handle the updates on the client.
-*   **Why the "Math" Works:** Because the data is sent via continuous SSE streams, the compression windows overlap across messages. When combined with standard compression like Brotli, streaming the entire DOM yields immense compression ratios (reportedly 95%+). The network payload becomes negligible, completely eliminating the need for complex, granular state-diffing on your server.
-
-### Fine-Grained DOM Updates Are a Scaling Trap
-* **The Standard Intuition:** To maximize performance, you should surgically target and update only the specific DOM elements that change.
-* **The Datastar Insight:** Targeting individual elements requires the server to spend computing resources tracking exactly what needs to be updated and where. Instead, **rendering the whole view (or main body) is actually simpler and faster at scale.** By sending the entire block of new content, you get "batching for free" and rely on the client-side `idiomorph` library to quickly diff and patch the DOM.
-
-### The "Immediate Mode" Render Paradigm (Send the Whole Page)
-**The Unintuitive Claim:** Sending a 140kb HTML file on every single state change is faster and more efficient than sending tiny, surgical JSON updates.
-**The Insight (from andersmurphy):**
-Datastar can be treated like an "immediate mode" GUI in video games. Instead of calculating partial updates, the server just re-renders the whole page and pushes it to the client.
-*   **The "Math" Changer (Streaming Compression):** Because Datastar uses a single, long-lived connection, algorithms like Brotli or zstd use *streaming compression*. They share a compression window for the duration of the connection. If you send a 140kb frame, and 100ms later send another 140kb frame where only one `<div>` changed, the compression algorithm treats it as a byte-level diff. The resulting packet sent over the wire is only **13 to 20 bytes**.
-*   **Guideline:** Don't overcomplicate backend logic trying to figure out exactly which small fragment to update. Re-render the whole view (or large chunks of it) and let the network compression handle the "diffing."
-
----
-
-### Server-Sent Events (SSE) Make Massive Payloads Surprisingly Cheap
-* **The Standard Intuition:** Sending large chunks of HTML over the wire continuously is a bandwidth nightmare.
-* **The Datastar Insight:** Datastar relies heavily on long-lived SSE connections. Because these connections stay open, they benefit from **really good HTTP compression** over the life of the stream. When combined with coarse-grained server updates, the actual data traveling over the wire is highly compressed and efficient.
-
----
+See [Streaming compression: mechanism, evidence, and escalation](streaming-compression.md)
+for the measured gzip boundary, contrasting workloads, and the reasoning behind
+this decision order.
 
 #### Why re-render on any database change?
 
@@ -486,7 +483,7 @@ When faced with complex client-side requirements (like data grids or interactive
 ### High Concurrency Doesn't Require High-Performance Backend Languages
 Standard web dev assumes that highly interactive, multiplayer, or realtime apps (like Game of Life or collaborative checkboxes) require heavy, highly optimized backends and complex client-side state managers.
 *   **The Unintuitive Insight:** You can handle front-page Hacker News traffic for global multiplayer applications on a $5 VPS using a "slow" dynamic language (Anders uses Clojure).
-*   **The Guideline:** Rely on foundational, highly-optimized tools rather than application-level code. By using SQLite, basic event batching, and Brotli compression, you offload the hard work. The backend stays dramatically simpler because all it has to do is broadcast HTML over SSE.
+*   **The Guideline:** Rely on foundational, highly-optimized tools rather than application-level code. By using SQLite, basic event batching, and streaming compression, you offload the hard work. The backend stays dramatically simpler because all it has to do is broadcast HTML over SSE. Follow the compression defaults and escalation order above rather than designing a fine-grained protocol pre-emptively.
 
 ---
 
