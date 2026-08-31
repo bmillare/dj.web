@@ -50,61 +50,37 @@ A common objection to returning HTML blobs instead of minimal JSON is that it wi
 ---
 
 ## Server Ownership & The Single Source of Truth
-### The UI Model Remains Familiar (View = f(state))
-*   **The standard intuition:** Leaving React/Vue means abandoning their highly successful functional UI models.
-*   **The Datastar reality:** You are still using the exact same `view = f(state)` paradigm.
-*   **Guideline:** The only difference is where the execution happens. The view is rendered (morphed) on the client, but the `f(state)` executes entirely on the server.
 
-### "View = f(state)" Belongs on the Network, Not the Client
-**The Unintuitive Claim:** The client page shouldn't know anything about the data structure or the logic of the app.
-**The Insight (from andersmurphy & array_key_first):**
-Standard modern web dev assumes the client needs JSON to understand and render state. In Datastar, the HTML *is* the application state.
-*   The client is intentionally "dumb"—it just renders the HTML it receives.
-*   The developer experience (DX) is identical to React's `View = f(state)`, except that function runs entirely on the backend and is piped over the network.
-*   **Guideline:** Strip business logic and state management out of the browser. Write your UI as pure functions of your backend state.
+The most difficult mental hurdle when adopting Datastar is unlearning the standard modern web architecture. You are no longer building two separate applications (a frontend UI and a backend API) that constantly sync with one another. In Datastar, the server owns everything: the state, the routing, the UI logic, and the swap behavior. 
 
-### Move "Locality of Behavior" (LoB) to the Backend
-* **The Standard Intuition:** Front-end code (or HTML attributes) should dictate what happens to the UI. For example, HTMX uses attributes like `hx-target` and `hx-swap` so the HTML explicitly tells the browser where to put the server's response.
-* **The Datastar Insight:** Datastar flips this to be **server-driven**. The client HTML simply says "fetch this" (e.g., `data-on:click="@get('/rebuild')"`); the server responds with an HTML fragment containing an ID, and Datastar implicitly knows to swap out the matching element.
-* **Guideline:** Keep your client-side API simple and move the routing/swapping logic to backend state. As user `sudodevnull` notes, a single line of backend code like `datastar.Patch(renderComponent(db.NextRow))` becomes the ultimate Locality of Behavior.
+### 1. Eradicating the "Two-State" Accidental Complexity
+Standard modern web development forces you to build two separate state machines: a backend database that acts as the real source of truth, and a frontend state manager (Redux, React Context, Pinia) to mirror that truth for the UI. Developers spend massive amounts of time and complex code just keeping these two states synchronized.
 
----
+* **The Unintuitive Reality:** Creating an intricate JavaScript state on the client is an illusion of control and a source of accidental complexity. Because state eventually has to persist to a database, you are *already* managing it on the server.
+* **The Insight:** As noted by **JSR_FDED**, dropping the "two-state problem" drastically reduces bugs because you eliminate the dual sources of truth. Furthermore, the idea that the DOM must be micro-managed by a massive JavaScript bundle is a modern fallacy. Browsers are built by immensely talented C++ engineers specifically to render HTML and manage state via hypermedia.
+* **The Result:** Moving state entirely to the backend results in explosive performance gains. **Aeolos** reported that migrating from React to Datastar dropped their initial page load from 2.0s to 0.1s, shrank a 750KB JS bundle to just 20KB, and reduced network requests from 40+ to 1.
+* **Guideline:** Push 99% of your state to the backend. Use a "Fat Services, Thin Routes" architecture where business logic lives in a core backend library that your UI templates consume.
 
+### 2. `View = f(state)` Belongs on the Network
+Leaving React or Vue does *not* mean abandoning their highly successful functional UI models. You are still using the exact same `view = f(state)` paradigm—the only difference is where the execution happens.
 
-### The "Two-State" Problem is Accidental Complexity
-*   **The standard intuition:** A robust web app requires a dedicated client-side state management system (Redux, React Context, etc.) to handle the UI, which then syncs with the backend.
-*   **The reality/claim:** Because state eventually has to persist to a database, you are *already* managing it on the server. Recreating it on the client forces you to manage duplicate state, leading to synchronization bugs, diverging logic, and accidental complexity.
-*   **Guideline:** Default to "client-light" architecture. For most web applications (dashboards, eCommerce, internal tools), the extra complexity of client-side state is simply not worth the cost. Keep the source of truth purely on the server.
+* **The Unintuitive Reality:** The client page shouldn't know anything about the data structure or the logic of the application. The standard assumption is that clients need JSON to understand and render state. In Datastar, **the HTML *is* the application state.** 
+* **The Insight (from andersmurphy & array_key_first):** The client is intentionally "dumb"—it just morphs the HTML it receives. The developer experience is identical to React's functional components, except that function runs entirely on the backend, and the resulting UI state is piped over the network via Server-Sent Events (SSE).
+* **Client State is an Illusion:** Consider a massive billion-row grid. Standard intuition assumes you need a complex client-side virtual DOM array to handle it. In Datastar, those billion items live purely in a backend SQLite database. The server only pushes the HTML for the rows the user is currently viewing, plus a small buffer. As the user scrolls, the server simply evaluates `f(state)` and streams the next pre-rendered view down the pipe. 
 
-### Eliminate the "Two Applications" Problem (Keep State on the Server)
-Modern web dev often results in building two applications: a backend that makes decisions, and a JS-heavy frontend that manages UI state. Developers then spend massive amounts of time just keeping these two states synced.
-*   **The Unintuitive Insight:** The notion that the DOM must be managed by JavaScript is a modern fallacy. Browsers are built by immensely talented C++ engineers specifically to render HTML and manage state via hypermedia.
-*   **The Guideline:** Push your state to the backend. Datastar allows you to keep almost all your state on the server, resulting in a much simpler single source of truth. However, while discouraged, Datastar *does* have a client-side signal system if you absolutely need local state for specific UX constraints.
+### 3. Pushing "Locality of Behavior" to the Backend
+Even within the hypermedia/HTML-over-the-wire ecosystem, Datastar challenges existing norms regarding where UI swap logic should live.
 
-### Back-End State Management is Faster to Build and Run
-* **The Unintuitive Claim:** Keeping 99% of the state and logic on the back end reduces bugs and results in a faster initial load time.
-* **The Insight:** Modern front-end development focuses on syncing back-end databases with front-end state managers (Redux, React Context, etc.). By moving state to the back end, **JSR_FDED** notes you eliminate the headache of dealing with two sources of truth. Furthermore, **Aeolos** reported that switching from React to Datastar dropped their initial page load from 2 seconds to 0.1 seconds, reducing a 750KB JS bundle to just 20KB, and reducing network requests from 40+ to 1.
-* **Guideline:** Let the server be the single source of truth for business logic and state. Use a "Fat Services, Thin Routes" architecture where business logic lives in a core back-end library that both your UI templates and any external JSON APIs can consume.
+* **The Unintuitive Reality:** In libraries like HTMX, the frontend dictates the UI swap. The HTML attributes explicitly tell the browser where to put the server's response (e.g., `hx-target="#div"` and `hx-swap="outerHTML"`). Datastar flips this to be **server-driven**.
+* **The Insight:** In Datastar, the client HTML simply triggers an event: `"Hey, I was clicked"` (e.g., `data-on-click="@get('/rebuild')"`). The server responds with an HTML fragment containing an ID, and Datastar implicitly knows to morph the matching element.
+* **Guideline:** Keep your client-side attributes incredibly simple. As **sudodevnull** notes, returning a single line of backend code like `datastar.Patch(renderComponent(db.NextRow))` becomes the ultimate Locality of Behavior. The backend dictates exactly what UI updates, removing the need for the client to track targets.
 
-### Client State is an Illusion (Adaptive View Rendering)
-* **The Standard Intuition:** A complex UI (like a billion-item spreadsheet or massive grid) requires complex front-end data structures (e.g., virtual DOM arrays) to manage state.
-* **The Datastar Insight:** The client holds no actual state. In the massive grid examples, the billions of items live purely in a backend SQLite database. The server only pushes the HTML for what the user is currently looking at, plus a small buffer. When the user scrolls or interacts, the server simply sends the next pre-rendered view down the SSE pipe.
+### 4. Tight Coupling is a Feature, Not a Bug
+The industry standard dictates that frontends and backends should be strictly decoupled, usually via a heavily typed JSON API (REST/GraphQL), so multiple clients can consume the same endpoints safely. Datastar throws this out the window.
 
----
-
-### Tight Coupling of Frontend and Backend is a Feature, Not a Bug
-The industry standard is to strictly decouple the frontend (e.g., React) from the backend (e.g., REST/GraphQL API) so multiple clients can consume the same JSON.
-* **The Unintuitive Claim:** Anders Murphy explicitly confirms that Datastar abandons this: *"Yeah it assumes you're building a full stack app driven by the backend. So the client and backend are tightly coupled and built for each other."*
-* **Guideline:** Build your application as a single cohesive unit. The backend doesn't serve raw data; it serves HTML fragments and behavior directly tailored to the UI.
-
----
-
-### Open Data Models > Strict Static Typing (The "Anders Murphy" Insight)
-Standard web dev heavily emphasizes strict static typing (like TypeScript) to make refactoring safe and prevent bugs.
-* **The Unintuitive Claim:** Anders Murphy argues that strict types can actually *hinder* refactoring in this architecture. He states: *"If your data model is open and not closed you only need to change the location you are changing. This is how the internet works. Types that don't support this model actively hinder refactoring."*
-* **Guideline:** Embrace an open data model where you only touch the specific parts of the system that are changing, rather than fighting compiler errors across a tightly bound, globally typed JSON API.
-
----
+* **The Unintuitive Reality:** If you are building a web application, decoupling the frontend from the backend is usually premature optimization that creates massive friction.
+* **The Insight:** As **andersmurphy** explicitly confirms, Datastar abandons decoupled APIs: *"It assumes you're building a full-stack app driven by the backend. So the client and backend are tightly coupled and built for each other."* The backend doesn't serve raw, generic data; it serves HTML fragments deeply tailored to the exact UI the user is looking at.
+* **Open Data > Strict Typing:** Standard web dev relies on strict static typing (like TypeScript) across the network boundary to prevent bugs. However, **andersmurphy** argues that strict types across network boundaries can actively hinder refactoring in this architecture. By embracing an open data model (which is how the internet natively works), you only ever have to touch the specific parts of the system that are actively changing, rather than fighting compiler errors across a rigidly bound, globally typed JSON API. Build your application as a single cohesive unit.
 
 ## SSE, CQRS, and Trivial Multiplayer
 
