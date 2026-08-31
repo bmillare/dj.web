@@ -24,6 +24,10 @@
   {:extra-paths ["dev"]
    :main-opts ["-m" "dj.web.dev.hello-world"]}
 
+  :mobile-resume-conformance
+  {:extra-paths ["dev"]
+   :main-opts ["-m" "dj.web.dev.mobile-resume-conformance"]}
+
   :build
   {:deps {io.github.clojure/tools.build {:mvn/version "0.10.5"}
           slipset/deps-deploy             {:mvn/version "0.2.2"}}
