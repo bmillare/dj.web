@@ -192,72 +192,42 @@ To succeed with Datastar, you must unlearn SPA habits and lean into native HTML,
 
 ## Signals & Client-Side State
 
-### Signals are only for ephemeral client-side state
+Standard hypermedia frameworks (like HTMX) rely entirely on DOM-swapping for state changes. While excellent for server state, this often creates a frustrating client experience where out-of-bounds (OOB) HTML updates accidentally wipe out ephemeral client state—like the text a user is currently typing into an input field, or the open/closed state of a local dropdown. 
 
-Signals should only be used for ephemeral client side state. Things like: the current value of a text input, whether a popover is visible, current csrf token, input validation errors. Signals can be controlled on the client via expressions, or from the backend via `patch-signals`. See **Decide Who Owns DOM State Before Adding a Morph Boundary** for how signals fit between server-owned domain state and specialized client components.
+Datastar incorporates modern frontend paradigms into its hypermedia approach using **Signals**. However, developers coming from React, Vue, or Svelte must completely unlearn how they use reactivity. 
 
-### Signals in elements should be declared __ifmissing
+### Signals are Strictly for Ephemeral UI State
+**The Counter-Intuitive Claim:** You can have rich, persistent client-side interactivity without a heavy JavaScript framework, but you must resist the urge to store your data models in the client.
 
-Because signals are only being used to represent ephemeral client state that means they can only be initialised by elements and they can only be changed via expressions on the client or from the server via `patch-signals` in an action. Signals in elements should be declared `__ifmissing` unless they are "view only".
+In standard SPAs, the instinct is to pull backend data models (like deep JSON objects) directly into frontend reactive state so the UI can bind to them. **Do not do this in Datastar.** 
+Because of how Datastar parses signals and translates HTML attributes to JavaScript (converting `kebab-case` to `camelCase` and dealing with modifiers), dumping complex backend data structures into frontend signals creates a mess. For example, if you have complex backend data with unconventional keys (e.g., Kubernetes `map[string]string` labels formatted like `example.com/label-key`), attempting to store them directly in Datastar signals will cause parsing headaches.
 
-### View only signals
+Keep heavy domain data strictly on the server. Signals should *only* be used for ephemeral client-side facts, such as:
+* The current value of a text input (drafts)
+* Whether a popover or menu is visible
+* The current CSRF token
+* Client-side input validation errors
 
-View only signals, are signals that can only be changed by the server. These should not be declared `__ifmissing` instead they should be made "local" by starting their key with an `_` this prevents the client from sending them up to the server.
+### Preserving State: `__ifmissing` and Local Signals
+Because signals represent ephemeral state, their initialization and synchronization require specific modifiers to play nicely with server-rendered HTML. 
 
-### Signals for Ephemeral Client State
-* **The Unintuitive Claim:** You can have rich, persistent client-side interactivity without a heavy JavaScript framework.
-* **The Insight:** A common pain point with standard hypermedia (like HTMX) is that out-of-bounds (OOB) HTML updates can accidentally wipe out ephemeral client state, like text a user is currently typing into an input field. **andersmurphy** highlights that Datastar's lightweight "signals" solve this edge case cleanly.
-* **Guideline:** Use Datastar signals exclusively for ephemeral, strictly client-side UI states (like toggling a local menu or preserving text input during a morph) to avoid needing hidden form inputs or fighting the hypermedia architecture.
+**Standard Signals (`__ifmissing`)**
+Signals are typically initialized by elements in the DOM and can be changed via client expressions or from the backend via a `patch-signals` action. To prevent a server-rendered DOM morph from accidentally resetting a user's active UI state, signals attached to elements should almost always be declared using the `__ifmissing` modifier (e.g., `data-signals__ifmissing="{...}"`). This tells Datastar to respect the existing client-side value if it's already active.
 
-### Keep Signals Simple; Leave Complex Domain Data on the Server
-**The Standard View:** You should pull your backend data models (like a deep JSON object) directly into frontend reactive state so the UI can bind to it.
-**The Datastar Insight (pst):**
-* Because of how Datastar parses signals and translates HTML attributes to JavaScript (converting `kebab-case` to `camelCase` and dealing with modifiers), dumping complex backend data structures into frontend signals can create a mess.
-* **The Guideline:** If you have complex backend data with unconventional keys (e.g., Kubernetes `map[string]string` labels formatted like `example.com/label-key`), do not try to store them directly in Datastar signals. Keep the heavy domain data strictly on the backend, and only use signals for simple UI interactions (opening a dropdown, capturing a text input).
-
-### Data Reactivity is Driven by "Signals"
-Standard hypermedia frameworks (like HTMX) rely almost entirely on DOM-swapping for state changes.
-* **The Insight:** Datastar incorporates modern frontend paradigms into its hypermedia approach. `andersmurphy` briefly mentions that application logic is managed via **"signals"**. While not elaborated on deeply in this text, this suggests that fast, client-side reactivity in Datastar is handled by a signals-based state model rather than pure server-roundtrips for every minor interaction.
-
----
-(Brent comment: this is important for actual in practice applications)
-### Complex UI (Animations/Grids) is Solved via Web Components + Datastar
-When faced with complex client-side requirements (like data grids or interactive canvas animations), developers usually reach for React components.
-* **The Unintuitive Claim:** You can bridge the gap using tiny, vanilla Web Components driven by Datastar signals. For example, the complex "slick Star space animation" on the Datastar homepage is just a *"basic 1kb web component driven by datastar attributes."*
-* **Guideline:** If you need highly specialized client-side execution that HTML plus Datastar expressions cannot reasonably express, wrap it in a lightweight Web Component and use signals and host attributes to drive its public surface. Let Datastar keep morphing the host when that contract is safe; add an ignored-morph boundary only when the component truly owns an opaque subtree or lifecycle. Do not introduce a Web Component for ordinary signal-driven UI.
-
----
+**View-Only Local Signals (`_`)**
+Sometimes you have a signal that is strictly "view-only"—meaning it is only ever changed by the server pushing updates, and the client never needs to mutate it. These should **not** be declared with `__ifmissing`. Instead, they should be made "local" by prefixing their key with an underscore (e.g., `_mySignal`). This prevents the client from needlessly sending that data back up to the server on every request.
 
 ### Decide Who Owns DOM State Before Adding a Morph Boundary
+Under the hood, Datastar uses Idiomorph to reconcile server-rendered attributes on surviving elements while inserting and removing nodes. This means if you imperatively add a class or attribute in the browser (via standard JS), it will disappear on the next morph if it is absent from the server's HTML.
 
-Idiomorph reconciles server-rendered attributes on surviving elements as well as
-inserting and removing nodes. A class or attribute added imperatively in the
-browser can therefore disappear on the next morph when it is absent from the
-server's HTML. That is usually an ownership conflict, not a reason to repair the
-attribute after every patch.
+Developers often misinterpret this as a flaw with morphing and try to create "ignored morph boundaries" to protect their UI. Usually, this is actually an **ownership conflict**. Before reaching for an escape hatch, choose who owns the state:
 
-Choose the owner before choosing a morphing escape hatch:
+1. **Domain state is server-owned.** Change it through a server action and render it in the next current-state view. Do not maintain a competing browser-only class or attribute for the same fact.
+2. **Ordinary ephemeral UI state is signal-owned.** Use signals for drafts, popovers, and transient visual states. Initialize them with `__ifmissing` and bind the DOM representation declaratively.
+3. **Specialized imperative behavior is component-owned.** When faced with complex client requirements (like interactive canvas animations, data grids, or third-party mapping widgets) that HTML and Datastar expressions cannot reasonably express, do not try to force them into signals. Instead, wrap them in a tiny, vanilla Web Component (e.g., the complex "slick Star space animation" on the Datastar homepage is just a 1kb Web Component). Drive its public surface with Datastar signals and host attributes where practical.
+4. **A morph boundary is exceptional.** Declare an ignored morph boundary *only* when morphing would directly violate the chosen ownership or corrupt an external component's internal lifecycle.
 
-1. **Domain state is server-owned.** Change it through an action and render it in
-   the next current-state view. Do not maintain a competing browser-only class
-   or attribute for the same fact.
-2. **Ordinary ephemeral UI state is signal-owned.** Use signals for drafts,
-   popovers, transient visual states, and other browser-local facts. Initialize
-   live signals with `data-signals__ifmissing` so a later morph does not reset
-   them, and bind the DOM representation declaratively.
-3. **Specialized imperative behavior is component-owned.** Put browser APIs or
-   external widgets that HTML plus Datastar expressions cannot reasonably
-   express behind a small Web Component or adapter. Drive its public surface
-   with signals and host attributes where practical.
-4. **A morph boundary is exceptional.** Declare one only when morphing would
-   violate the chosen ownership or an external component's lifecycle.
-
-A Web Component is not automatically an ignored island. Datastar can often
-continue morphing the custom element's host attributes while the component owns
-its internals. Conversely, ordinary signal-driven UI does not need a Web
-Component.
-
----
+Crucially: A Web Component is not automatically an ignored island. Datastar can often continue safely morphing a custom element's host attributes while the component securely owns its internals. Conversely, ordinary signal-driven UI does not need a Web Component at all.
 
 ## Operational Behaviors & Security
 
