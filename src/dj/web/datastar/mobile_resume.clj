@@ -11,7 +11,11 @@
   subscription core. Applications opt in by putting `script` in the page head
   and merging `subscription-attrs` onto each subscription owner. Owners must use
   distinct URLs. The endpoint must be an idempotent current-state GET for which a
-  fresh connection requires no replay cursor."
+  fresh connection requires no replay cursor. Hidden pages remain stream-free,
+  and server heartbeats must eventually reap an aborted writer.
+
+  When Datastar exposes supported deep-resume or request-restart semantics, this
+  version-coupled adapter should migrate to that primitive or be deprecated."
   (:require [clojure.data.json :as json]
             [dj.web.html :as html]))
 
@@ -29,7 +33,9 @@
   Merge these onto the element that owns the subscription. The initial and
   recovery expressions deliberately share the exact JSON-encoded URL spelling;
   Datastar v1.0.2 uses method plus exact URL for its default request cancellation.
-  Multiple owners on one page must therefore use distinct URLs."
+  Multiple owners on one page must therefore use distinct URLs. Do not combine
+  this helper with disabled request cancellation, a non-idempotent endpoint, or
+  a stream that requires a replay cursor."
   [updates-url]
   (require-non-empty-string! "updates-url" updates-url)
   (let [expression (str "@get(" (json/write-str updates-url :escape-slash false)
@@ -43,7 +49,8 @@
 
   The source is static and library-controlled. Pass `{:nonce \"...\"}` when a
   Content-Security-Policy authorizes this inline module by nonce. Policies that
-  prohibit all inline scripts are outside this helper's first support boundary."
+  prohibit all inline scripts are outside this helper's first support boundary.
+  Include this tag once per page; it serves every marked subscription owner."
   ([] (script {}))
   ([opts]
    (when-not (map? opts)

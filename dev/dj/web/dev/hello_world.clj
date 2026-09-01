@@ -6,6 +6,7 @@
   then open http://localhost:8080. Set PORT to choose another port."
   (:require [dj.web.datastar.assets :as assets]
             [dj.web.datastar.fused :as fused]
+            [dj.web.datastar.mobile-resume :as mobile-resume]
             [dj.web.datastar.subscribed :as subscribed]
             [dj.web.html :as html]
             [dj.web.http :as http]
@@ -31,8 +32,9 @@
      [:meta {:charset "utf-8"}]
      [:meta {:name "viewport" :content "width=device-width, initial-scale=1"}]
      [:title "dj.web hello world"]
-     (assets/script)]
-    [:body {:data-init "@get('/updates', {retry: 'always', retryMaxCount: 1000})"}
+     (assets/script)
+     (mobile-resume/script)]
+    [:body (mobile-resume/subscription-attrs "/updates")
      [:main#app
       [:h1 "dj.web hello world"]
       [:p#count "Count: " (:count @state)]

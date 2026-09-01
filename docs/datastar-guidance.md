@@ -149,8 +149,9 @@ Do not attempt to write vanilla JS to handle DOM swaps (e.g., `selector.outerHTM
 
 Despite being 40% smaller than HTMX, Datastar's patching engine automatically handles complex UI edge cases that usually require bloated JavaScript shims:
 * **Cursor and Focus State:** Datastar maintains text and cursor selection seamlessly even when an element is morphing out from underneath the user.
-* **Visibility Pruning:** With the default `openWhenHidden: false`, Datastar closes the SSE stream when the tab is hidden and reopens it when it becomes visible again. This prevents the browser and server from doing idle work while the user is away, and instantly fetches the most current state upon their return. 
-* **Stream Retries:** Note that reopening a successfully started stream after it ends for other reasons requires explicitly setting `retry: 'always'` (it is not provided by the default retry policy). 
+* **Visibility Pruning:** With the default `openWhenHidden: false`, Datastar closes the SSE stream when the tab is hidden and reopens it when it becomes visible again. This is an orderly visibility recycle: hidden pages remain stream-free and an ordinary visible transition fetches current state.
+* **Stream Retries:** Reopening a successfully started stream after it ends for other reasons requires explicitly setting `retry: 'always'` (it is not provided by the default retry policy).
+* **Deep Mobile Resume:** A third state exists when a mobile OS suspends the page and the browser later retains a Fetch that is still logically pending but no longer receives bytes. Retry cannot act because the request has not settled, and an ordinary visibility recycle may not replace it. For Datastar v1.0.2, mobile applications using dj.web's idempotent current-state GET contract can opt into `dj.web.datastar.mobile-resume`; its exact-URL re-invocation is version-coupled compatibility infrastructure, not a general retry mechanism. See the README for its preconditions and limits.
 
 ### Exceptional Integration Seams (Escaping the Morph)
 When Datastar needs to interact with opaque subtrees owned by the client (like a complex 3rd-party JS charting library) or attributes narrowly owned by the browser, you must define integration seams. 
@@ -184,7 +185,7 @@ To succeed with Datastar, you must unlearn SPA habits and lean into native HTML,
 * **The Guideline:** Delegate UI polish to native web features.
     * **Animations:** Use CSS animations, not JavaScript attributes. If you require highly complex choreographies, pull in a tiny, dedicated vanilla library (like `anime.js`) rather than expecting framework integration.
     * **Window Events:** Do not use JS resize observers; use Datastar's standard syntax to listen directly to native window events (e.g., `data-on:window...`).
-    * **Scrolling:** Trigger native DOM methods directly via hooks, such as `data-on:load="el.scrollIntoView()"`.
+    * **Scrolling:** Trigger native DOM methods directly on initialization, such as `data-init="el.scrollIntoView()"`. In Datastar v1.0.2, `data-on:load` installs a `load` event listener; it is not an initialization hook.
 
 ### 4. Embrace "Ugly" HTML Attributes (Locality of Behavior)
 * **The SPA Intuition:** Frontend logic belongs in separate JavaScript files, hooks, or complex component lifecycles. HTML should just be a dumb template. 
@@ -252,12 +253,12 @@ Operating an immediate-mode, server-driven architecture like Hyperlith requires 
 ### Connection Limits and Visibility-Based Pruning
 * **The Standard Intuition:** Maintaining a persistent connection for every single user will exhaust connection pools (especially given HTTP/1.1 limits of ~6 concurrent connections per browser) and drain mobile batteries.
 * **The Datastar Reality:** Datastar intelligently hooks into the browser's native Page Visibility API. If a user switches tabs or minimizes the window, Datastar can prune the connection to aggressively save client battery life and server resources.
-* **Guideline:** Rely on the Visibility API to manage idle users. Furthermore, you should strongly prefer HTTP/2 (which negotiates around 100 concurrent connections by default) to entirely bypass legacy HTTP/1.1 connection limits.
+* **Guideline:** Rely on the Visibility API to manage ordinary idle users. Test deep mobile suspension separately: a browser can resume with a request that still appears pending but is no longer live. Furthermore, you should strongly prefer HTTP/2 (which negotiates around 100 concurrent connections by default) to entirely bypass legacy HTTP/1.1 connection limits.
 
 ### Network Resilience: Native Sockets vs. SPA Timeouts
 * **The Standard Intuition:** SPAs (React/Vue) handle spotty 2G/3G networks better because the client logic is already loaded, allowing JS to elegantly manage loading states and retries.
 * **The Datastar Reality:** SPAs on 2G/3G often fail entirely because enterprising engineers usually invent their own arbitrary JavaScript timeouts that make no sense when dealing with a trickle of bytes-per-second. Standard HTML requests and SSE streams rely on native browser socket behavior. The browser intrinsically knows if it is still receiving bytes (even slowly) and won't prematurely kill the request.
-* **Guideline:** Trust the platform. HTML rendering and SSE with a durable retry policy (e.g., `retry: 'always'`) often prove far more resilient in ultra-low bandwidth scenarios than custom SPA timeout logic.
+* **Guideline:** Trust the platform for slow-but-live connections, and use a durable retry policy (e.g., `retry: 'always'`) for requests that settle. Do not confuse either with a pending-but-silent Fetch after deep mobile suspension; that failure needs an explicit, tested restart path.
 
 ### The Offline Paradox: No Optimistic UI, but PWAs Still Work
 * **The Standard Intuition:** If an app requires constant server contact to render UI, it cannot function as an offline Progressive Web App (PWA).

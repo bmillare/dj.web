@@ -25,6 +25,8 @@ no Ring or external web-server dependency.
   rendering boundaries.
 - `dj.web.datastar.assets` — construct a script tag for a pinned CDN bundle or
   a consumer-supplied URL.
+- `dj.web.datastar.mobile-resume` — optional Datastar v1.0.2 compatibility for
+  long-lived current-state subscriptions after deep mobile suspension.
 
 The architecture and application opinions behind this stack are preserved in
 [Datastar application guidance](docs/datastar-guidance.md). The central idea is
@@ -135,7 +137,57 @@ nix develop --command clojure -M:hello-world
 ```
 
 Then open `http://localhost:8080`. The example lives under `dev/`, so it is not
-included in the library jar.
+included in the library jar. It opts into the mobile-resume compatibility path
+described below so its shell demonstrates the production-safe mobile shape.
+
+### Optional deep-mobile-resume recovery
+
+Durable retry, ordinary visibility handling, and deep mobile resume solve three
+different lifecycle states. `retry: 'always'` reopens a request after it throws
+or ends. Datastar ordinarily closes a hidden subscription and opens current truth
+when the page becomes visible. After deep OS suspension, however, a browser can
+retain a Fetch that is still logically pending but no longer receives bytes, so
+there is no settled request for retry to act on.
+
+Mobile applications using the current-state contract can opt into the bounded
+Datastar v1.0.2 compatibility adapter:
+
+```clojure
+(require '[dj.web.datastar.assets :as assets]
+         '[dj.web.datastar.mobile-resume :as mobile-resume])
+
+[:html
+ [:head
+  (assets/script "/assets/datastar.js")
+  (mobile-resume/script)]
+ [:body (mobile-resume/subscription-attrs "/updates")
+  [:main#app ...]]]
+```
+
+`subscription-attrs` owns both the initial durable GET and the recovery action,
+ensuring their URL spellings are identical. The inline module coalesces visible
+resume signals and re-invokes that action. With dj.web's pinned Datastar v1.0.2,
+default same-method/same-URL cancellation aborts the prior Fetch before opening
+its replacement. This behavior is browser-conformance-tested but is not claimed
+as a stable cross-version Datastar API; rerun the conformance gate on every
+client upgrade.
+
+Opt in only when all of these are true:
+
+- the endpoint is an idempotent GET that immediately renders current truth and
+  needs no replay cursor;
+- every owner on a page has a distinct subscription URL;
+- Datastar's default request cancellation remains enabled;
+- hidden pages should remain stream-free; and
+- server heartbeats eventually expose aborted writers and bound cleanup.
+
+Include `(mobile-resume/script)` once per page. For nonce-authorized inline
+modules use `(mobile-resume/script {:nonce nonce})`. A CSP that forbids inline
+scripts even with a nonce is outside this helper's support boundary; retain an
+application-owned external adapter in that case. Desktop or controlled-kiosk
+applications can omit the helper. The namespace is isolated compatibility
+infrastructure and should migrate or disappear when Datastar provides supported
+deep-resume/restart semantics; it is not a general expression-building API.
 
 ## Choosing a Datastar transport
 

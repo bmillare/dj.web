@@ -4,19 +4,22 @@ These are operational lessons learned while adopting dj.web inside an existing
 Clojure application. They supplement the architectural source material in
 `datastar-guidance.md` with concrete library-specific behavior.
 
-## Keep client helpers in the application until their shape is earned
+## Separate convenience helpers from compatibility infrastructure
 
 Long-lived browser subscriptions need an explicit expression such as
-`@get('/updates', {retry: 'always', retryMaxCount: 1000})`, but dj.web does not
-wrap that expression in a client-helper API. Applications should write their
-own helpers when local repetition warrants one.
+`@get('/updates', {retry: 'always', retryMaxCount: 1000})`. Ordinary wrappers and
+general expression builders remain application-owned until their shape is earned
+across independent applications and developer feedback. Local repetition alone
+does not justify a shared `util` namespace.
 
-This is deliberate. A shared `util`-style namespace should emerge only after a
-helper has lived across multiple independent web applications and developer
-feedback shows recurring friction in several contexts. Until that evidence
-exists, extracting a convenience function would standardize guesses about its
-arguments, return shape, and policy. Record the pain first; generalize only when
-the accumulated examples make the common shape clear.
+Compatibility infrastructure has a different threshold. A severe upstream gap
+that defeats dj.web's foundational current-state contract can justify a narrow
+bridge before multi-application repetition. Such a bridge must be opt-in,
+isolated from the server core, coupled to an explicit upstream version, tested at
+that seam, and designed for removal. `dj.web.datastar.mobile-resume` is that kind
+of bridge for Datastar v1.0.2's pending-but-silent mobile-resume case; it is not
+precedent for a general expression-building API. See the README's mobile section
+for its bounded consumer contract.
 
 ## Keep both long-lived boundaries indirect at the REPL
 
